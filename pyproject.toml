@@ -55,11 +55,15 @@ target-version = "py314"
 line-length = 100
 
 [tool.ruff.lint]
-# The guidelines' recommended minimum (§13) is E, F, B, UP, SIM, RET, TCH.
-# TCH (hoisting type-only imports under `if TYPE_CHECKING`) is omitted on purpose
-# (§16): on Python 3.14 annotations are evaluated lazily (PEP 649) and Pydantic
-# and Typer read them at runtime, so moving type-only imports out of the module
-# is the fragile pattern we deliberately avoid — e.g. `Result` is imported at
-# runtime in app/core/user.py, not hidden behind TYPE_CHECKING. Enable TCH in a
-# project that never introspects annotations at runtime.
-select = ["E", "F", "B", "UP", "SIM", "RET"]
+# The guidelines' recommended minimum (§13) is E, F, B, UP, SIM, RET, TCH; we add
+# I (import sorting) so `ruff check --fix` organizes imports. TCH (hoisting
+# type-only imports under `if TYPE_CHECKING`) is omitted on purpose (§16): on
+# Python 3.14 annotations are evaluated lazily (PEP 649) and Pydantic and Typer
+# read them at runtime, so moving type-only imports out of the module is the
+# fragile pattern we deliberately avoid — e.g. `Result` is imported at runtime in
+# the core, not hidden behind TYPE_CHECKING. Enable TCH only if you never
+# introspect annotations at runtime.
+select = ["E", "F", "I", "B", "UP", "SIM", "RET"]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true  # keep `X, Y as Z` from one module on a single import

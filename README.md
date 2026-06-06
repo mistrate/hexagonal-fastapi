@@ -1,8 +1,8 @@
-# User Profile — Functional Core / Imperative Shell
+# Users & Teams — Functional Core / Imperative Shell
 
-A tiny, working service (create a user and change their display name, over HTTP
-or CLI), written as a toy to reason about
-[`python_guidelines.md`](./python_guidelines.md).
+A small, working service — create users and teams, and manage a user's
+membership (member/admin) in a team, over HTTP or CLI — written as a toy to
+reason about [`python_guidelines.md`](./python_guidelines.md).
 
 It started life as a Ports & Adapters (Hexagonal) POC built around a
 `UserRepository` port. The guidelines argue that such a port — a `Protocol`
@@ -12,8 +12,7 @@ over-engineering reflex (§2, Corollary 2):
 > A pure core never calls the service — the shell does. You don't need a
 > `UserRepository` interface to swap CSV for Postgres; you swap the shell function.
 
-So this version keeps the **same feature** but moves the repository anti-pattern
-out and follows the rules that apply at this size. Targets Python 3.14 (PEP 695
+So the core has no port; storage lives in the shell. Targets Python 3.14 (PEP 695
 generics, PEP 649 deferred annotations).
 
 ## The one idea
@@ -21,42 +20,27 @@ generics, PEP 649 deferred annotations).
 Split the program in two:
 
 ```
-            HTTP request / CLI args                    SQLite / memory / Postgres
-                     │                                            ▲
-                     ▼                                            │
-        ┌─────────────────────────┐                  ┌───────────────────────────┐
-        │   IMPERATIVE SHELL       │   User value     │   IMPERATIVE SHELL         │
-        │   app/shell/http.py      │ ───────────────▶ │   app/shell/sqlite_store.py│
-        │   app/shell/cli.py       │ ◀─────────────── │   does the I/O             │
-        │   reads input, performs  │   Result value   └───────────────────────────┘
-        │   the effects            │
-        └─────────────────────────┘
-                     │  passes a value, gets a value back
-                     ▼
-        ┌─────────────────────────┐    create_user(id, email, name) -> Result
-        │   FUNCTIONAL CORE        │    change_display_name(user, raw) -> Result
-        │   app/core/user.py       │    pure: no I/O, no store, no exceptions
-        └─────────────────────────┘        for domain outcomes, no mocks to test
+        HTTP request / CLI args                  SQLite / memory / Postgres
+                 │                                  one Store, 3 tables
+                 ▼                                  (users, teams, memberships)
+    ┌─────────────────────────┐              ┌───────────────────────────┐
+    │   IMPERATIVE SHELL       │  values      │   IMPERATIVE SHELL         │
+    │   http.py / cli.py       │ ───────────▶ │   *_store.py               │
+    │   reads input, loads,    │ ◀─────────── │   does the I/O             │
+    │   performs the effects   │  Result      └───────────────────────────┘
+    └─────────────────────────┘
+                 │  passes values, gets a value back
+                 ▼
+    ┌─────────────────────────┐   create_user(...) / change_display_name(...)
+    │   FUNCTIONAL CORE        │   create_team(...) / add_member(user, team, role, existing)
+    │   app/core/*.py          │   pure: no I/O, no store, no exceptions for
+    └─────────────────────────┘   domain outcomes, no mocks to test
 ```
 
-The **core** computes values and returns them. The **shell** reads input from
-the world, hands values to the core, and performs the effects the core's return
-value describes. Dependencies still point inward — `app/core/` imports nothing
-from `app/shell/` or any framework — but there is no port the core depends on.
-
-## What changed from the Hexagonal version, and why
-
-| Hexagonal POC | This version | Guideline |
-|---|---|---|
-| `UpdateUserProfileService` calls `repo.get`/`repo.save` | `create_user` / `change_display_name` are pure functions over values | §2 functional core |
-| `UserRepository` **port** the use case depends on | no port in the core; a `UserStore` Protocol lives in the *shell* (`user_store.py`), only because there are real backends | §2 Corollary 2 + the §2 carve-out |
-| `update_profile` mutates the user, raises `ValueError`/`LookupError` | frozen `User`; bad input → `Err(...)`; missing user → `None` | §3.1, §7.3, §7.2, §11 |
-| `email: str`, `display_name: str` | `Email`, `DisplayName` — parsed at the edge, invariant enforced by `__post_init__` | §8, §9 |
-| Test builds a fake `InMemoryUserRepository` to test the rule | core test passes values, asserts a `Result` value | §14.4 |
-| `app.dependency_overrides[...]` seam in prod and tests | `create_app(store)` — ordinary composition | (the seam only existed to inject past the port) |
-
-The headline is in the tests: **`tests/test_user.py` constructs no fake and
-patches nothing.** That is the payoff of moving I/O to the edges.
+The **core** computes values and returns them. The **shell** reads input from the
+world, hands values to the core, and performs the effects the core's return value
+describes. Dependencies point inward — `app/core/` imports nothing from
+`app/shell/` or any framework — and there is no port the core depends on.
 
 ## Layout
 
@@ -64,23 +48,62 @@ patches nothing.** That is the payoff of moving I/O to the edges.
 app/
   core/                 FUNCTIONAL CORE — pure, no I/O, no framework, no mocks
     result.py           Ok / Err / Result, PEP 695 generics (§6, §7)
-    user.py             Email, DisplayName (smart constructors §8/§9), frozen User,
-                        create_user (collect-all §8), describe (assert_never §5),
-                        change_display_name (pure §2/§12)
+    errors.py           DomainError marker (shared once a 2nd domain needed it)
+    user.py             Email, DisplayName, User; create_user, change_display_name
+    team.py             TeamName, Team; create_team
+    membership.py       MembershipRole, Membership; add_member / change_role / remove_member
+                        (total transitions over `Membership | None`, §4)
   shell/                IMPERATIVE SHELL — I/O at the edges
-    user_store.py       UserStore Protocol — the shared persistence seam (§2 carve-out)
-    memory_store.py     InMemoryUserStore   (tests / local)
-    sqlite_store.py     SqliteUserStore     (default; stdlib sqlite3, file-backed)
-    postgres_store.py   PostgresUserStore   (optional `postgres` extra)
-    http.py             FastAPI adapter + create_app (POST /users, PUT …/profile)
-    cli.py              Typer CLI — `add` and `rename`, same core
+    stores.py           UserStore / TeamStore / MembershipStore Protocols + combined Store
+    memory_store.py     InMemoryStore   (tests / local)
+    sqlite_store.py     SqliteStore     (default; stdlib sqlite3, 3 tables, FKs)
+    postgres_store.py   PostgresStore   (optional `postgres` extra)
+    http.py             FastAPI adapter + create_app
+    cli.py              Typer CLI — one command per operation
   main.py               composition root (pick a backend, build the app)
 tests/
-  test_user.py          the rules as pure functions — no fakes, no mocks
-  test_sqlite_store.py  the store's real persistence, against a temp file
+  test_user.py test_team.py test_membership.py   pure core — no fakes, no mocks
+  test_store.py         the SQLite store across all 3 tables, against a temp file
   test_http.py          the shell via create_app — no override seam
   test_properties.py    hypothesis property tests on the pure core (§13)
 ```
+
+## How the store scaled when Teams were added
+
+This is the interesting part. Adding a second entity (`Team`) and an association
+(`Membership`) is where a store design either holds up or rots. Two choices kept
+it sane:
+
+1. **Segregated interfaces, unified implementation.** `stores.py` defines a
+   focused Protocol per entity (`UserStore`, `TeamStore`, `MembershipStore`) and
+   composes them into one `Store`. But there is still **one** backend class per
+   backend — `SqliteStore` owns all three tables, one connection, foreign keys.
+   So adding an entity is "a focused Protocol + a few methods on each backend,"
+   never a new abstraction the *core* depends on. Methods are entity-prefixed
+   (`get_user`, `get_team`, `get_membership`) precisely because one object serves
+   all three.
+
+2. **Complexity accretes in the shell, not the core.** The core transition stays
+   a one-liner — `add_member(user, team, role, existing)` is pure and total over
+   `Membership | None`. What grows is the *shell* orchestration: "add a member"
+   now loads the user, loads the team, loads the existing membership (three
+   reads across tables) before the pure decision and the write. The core never
+   learns that storage got more complicated, so its tests never change.
+
+Two costs worth seeing plainly:
+
+- **The N×M tax.** Every method in `stores.py` must be implemented in *every*
+  backend (memory, sqlite, postgres). More operations × more backends = linear
+  growth. That is the real price of keeping multiple backends — and the reason
+  §2 says to keep a store `Protocol` only when you genuinely have several
+  production implementations.
+- **Transactions cross operations.** With a fresh connection per call,
+  "check-then-insert" (add-member) is not atomic. A system that needs that would
+  pass a transaction/session down instead of a connection-per-op store. The toy
+  notes this rather than solving it.
+
+See [`MODULARITY.md`](./MODULARITY.md) for the full menu of ways to keep a
+boundary swappable in this paradigm.
 
 ## Run
 
@@ -89,32 +112,33 @@ uv sync                       # core + dev tooling (SQLite needs no extra)
 uv run uvicorn app.main:app --reload
 ```
 
-Create a user, then rename them (the store is persistent — no seed):
-
 ```bash
-curl -X POST localhost:8000/users \
-  -H 'content-type: application/json' \
-  -d '{"id": "1", "email": "ada@example.com", "display_name": "Ada"}'
-
-curl -X PUT localhost:8000/users/1/profile \
-  -H 'content-type: application/json' \
-  -d '{"display_name": "Ada Lovelace"}'
+curl -X POST localhost:8000/users -H 'content-type: application/json' \
+  -d '{"id": "u1", "email": "ada@example.com", "display_name": "Ada"}'
+curl -X POST localhost:8000/teams -H 'content-type: application/json' \
+  -d '{"id": "t1", "name": "Core"}'
+curl -X POST localhost:8000/teams/t1/members -H 'content-type: application/json' \
+  -d '{"user_id": "u1", "role": "member"}'
+curl -X PUT  localhost:8000/teams/t1/members/u1 -H 'content-type: application/json' \
+  -d '{"role": "admin"}'
+curl localhost:8000/users/u1/memberships
+curl -X DELETE localhost:8000/teams/t1/members/u1
 ```
 
-The CLI is the same core, different shell (Typer). Because the SQLite store is
-file-backed, `add` and `rename` are separate invocations — realistic, not a
-fake-a-user-then-rename script:
+The CLI is the same core, different shell (Typer). SQLite is file-backed, so each
+command is a separate, realistic invocation:
 
 ```bash
-uv run python -m app.shell.cli add 1 ada@example.com Ada
-uv run python -m app.shell.cli rename 1 "Ada Lovelace"
+uv run python -m app.shell.cli add-user u1 ada@example.com Ada
+uv run python -m app.shell.cli add-team t1 Core
+uv run python -m app.shell.cli add-member t1 u1 member
+uv run python -m app.shell.cli update-role t1 u1 admin
+uv run python -m app.shell.cli memberships u1
+uv run python -m app.shell.cli remove-member t1 u1
 uv run python -m app.shell.cli --help
 ```
 
 ## The quality gate
-
-The guidelines treat the type checker as part of the language (§13), so the gate
-is type-check + lint + test:
 
 ```bash
 uv run --extra postgres mypy   # strict; --extra so the Postgres store is checked against real types
@@ -128,21 +152,15 @@ Postgres store when the extra is installed.)
 
 ## Swapping the backend
 
-Change the one block in `app/main.py` — `SqliteUserStore` (default),
-`InMemoryUserStore`, or `PostgresUserStore` (install the extra:
-`uv sync --extra postgres`). No port is involved in the *core* — you swap one
-concrete class for another at the composition root. `UserStore` (a `Protocol` in
-`app/shell/user_store.py`) exists *only* because there are several real backends
-to choose between; that is the legitimate use of a `Protocol` the guidelines
-allow (§2, final paragraph), it lives in the shell, and the core never imports it.
-
-For the full menu — passing data as values, shell-level Protocols, higher-order
-functions, returning effects as data, and multiple front-ends — see
-[`MODULARITY.md`](./MODULARITY.md): how to get every kind of modularity Ports &
-Adapters gave you, in the core/shell paradigm.
+Change the one block in `app/main.py` — `SqliteStore` (default), `InMemoryStore`,
+or `PostgresStore` (install the extra: `uv sync --extra postgres`). No port is
+involved in the *core* — you swap one concrete `Store` for another at the
+composition root. The segregated Protocols in `app/shell/stores.py` are the
+legitimate use of a `Protocol` the guidelines allow (§2, final paragraph):
+several real backends, in the shell, never imported by the core.
 
 ## Extending
 
-See [`CLAUDE.md`](./CLAUDE.md) for the conventions to follow when adding a
-feature so the core stays pure and the discipline holds, and
-[`MODULARITY.md`](./MODULARITY.md) for choosing how to make a boundary swappable.
+See [`CLAUDE.md`](./CLAUDE.md) for the conventions to follow when adding a feature
+so the core stays pure and the discipline holds, and [`MODULARITY.md`](./MODULARITY.md)
+for choosing how to make a boundary swappable.

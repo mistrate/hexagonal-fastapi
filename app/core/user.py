@@ -19,10 +19,12 @@ change its display name. Rewritten to follow the guidelines:
 What is deliberately *gone*: the `UserRepository` port. The decision is pure;
 the core does not know storage exists (§2, Corollary 2).
 """
+
 import re
 from dataclasses import dataclass, replace
 from typing import NewType, assert_never
 
+from app.core.errors import DomainError
 from app.core.result import Err, Ok, Result
 
 # An identifier needs no invariant — a NewType is enough to stop it being mixed
@@ -36,12 +38,12 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 @dataclass(frozen=True, slots=True)
-class MalformedEmail:
+class MalformedEmail(DomainError):
     raw: str
 
 
 @dataclass(frozen=True, slots=True)
-class EmptyDisplayName:
+class EmptyDisplayName(DomainError):
     pass
 
 

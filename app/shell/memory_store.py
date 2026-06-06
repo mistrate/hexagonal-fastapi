@@ -1,20 +1,45 @@
-"""Concrete in-memory persistence — for local dev and tests.
+"""Concrete in-memory store — for local dev and tests.
 
-It satisfies the `UserStore` Protocol (`app/shell/user_store.py`) structurally,
-but it is just a concrete class; the core depends on no abstraction it provides.
-Swapping backends means writing another concrete store (`sqlite_store.py`,
-`postgres_store.py`) and changing one line in `main.py` — the swap the old
-`UserRepository` port enabled, without the port (§2, Corollary 2).
+Implements the full `Store` (users, teams, memberships) over plain dicts. It
+satisfies the segregated Protocols in `stores.py` structurally; the core depends
+on none of it. Memberships are keyed by the (user_id, team_id) pair — the
+composite key that a SQL backend would express as a composite primary key.
 """
+
+from app.core.membership import Membership
+from app.core.team import Team, TeamId
 from app.core.user import User, UserId
 
 
-class InMemoryUserStore:
+class InMemoryStore:
     def __init__(self) -> None:
-        self._by_id: dict[UserId, User] = {}
+        self._users: dict[UserId, User] = {}
+        self._teams: dict[TeamId, Team] = {}
+        self._memberships: dict[tuple[UserId, TeamId], Membership] = {}
 
-    def get(self, user_id: UserId) -> User | None:
-        return self._by_id.get(user_id)
+    def get_user(self, user_id: UserId) -> User | None:
+        return self._users.get(user_id)
 
-    def save(self, user: User) -> None:
-        self._by_id[user.id] = user
+    def save_user(self, user: User) -> None:
+        self._users[user.id] = user
+
+    def get_team(self, team_id: TeamId) -> Team | None:
+        return self._teams.get(team_id)
+
+    def save_team(self, team: Team) -> None:
+        self._teams[team.id] = team
+
+    def get_membership(self, user_id: UserId, team_id: TeamId) -> Membership | None:
+        return self._memberships.get((user_id, team_id))
+
+    def save_membership(self, membership: Membership) -> None:
+        self._memberships[(membership.user_id, membership.team_id)] = membership
+
+    def delete_membership(self, user_id: UserId, team_id: TeamId) -> None:
+        self._memberships.pop((user_id, team_id), None)
+
+    def list_memberships_for_user(self, user_id: UserId) -> tuple[Membership, ...]:
+        return tuple(m for m in self._memberships.values() if m.user_id == user_id)
+
+    def list_memberships_for_team(self, team_id: TeamId) -> tuple[Membership, ...]:
+        return tuple(m for m in self._memberships.values() if m.team_id == team_id)

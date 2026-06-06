@@ -4,8 +4,8 @@ A functional core is exactly the code property testing rewards: total functions
 over values, no I/O, no setup, nothing to mock. These assert invariants that
 should hold for *every* input, not just the handful in the example tests.
 """
-from hypothesis import given
-from hypothesis import strategies as st
+
+from hypothesis import given, strategies as st
 
 from app.core.result import Err, Ok
 from app.core.user import (

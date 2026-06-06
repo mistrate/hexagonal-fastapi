@@ -6,6 +6,7 @@ Here the rules are pure functions: pass values, assert on the returned value.
 "No mocking code you wrote" (§14.4) falls out of the design, because there is no
 I/O in the thing under test.
 """
+
 from app.core.result import Err, Ok
 from app.core.user import (
     DisplayName,

@@ -25,13 +25,12 @@ distillation. When the two disagree, the guidelines win.
 2. **No repository port in the core.** The business rule is a pure function that
    takes domain *values* (`change_display_name(user, raw) -> Result[...]`). It
    does not take a store, a repository, or any I/O interface. Loading and saving
-   happen in the shell, around the call. A `Protocol` is allowed **only** in the
-   shell (`app/shell/user_store.py`) and **only** to choose between
-   genuinely-multiple production backends (`SqliteUserStore` (default),
-   `InMemoryUserStore`, `PostgresUserStore`) — never to make the core testable.
-   If you can test it by passing a value, you don't need the Protocol. For the
-   full menu of ways to make a boundary swappable in this paradigm, see
-   [`MODULARITY.md`](./MODULARITY.md).
+   happen in the shell, around the call. Store `Protocol`s are allowed **only** in
+   the shell (`app/shell/stores.py`: `UserStore`/`TeamStore`/`MembershipStore`,
+   composed into `Store`) and **only** to choose between genuinely-multiple
+   production backends (`SqliteStore` (default), `InMemoryStore`, `PostgresStore`)
+   — never to make the core testable. If you can test it by passing a value, you
+   don't need the Protocol. For the full menu, see [`MODULARITY.md`](./MODULARITY.md).
 
 3. **Parse, don't validate.** Untyped input (`str`, request bodies, DB rows)
    becomes a typed domain value once, at the boundary, via a smart constructor
@@ -43,7 +42,8 @@ distillation. When the two disagree, the guidelines win.
 
 4. **Pick the right error tool (§6).**
    - Expected domain outcome the caller branches on → `Result[T, E]` with a
-     typed error (e.g. `EmptyDisplayName`). Never `raise` for these.
+     typed error value that subclasses the `DomainError` marker (e.g.
+     `EmptyDisplayName`; a plain marker, never `Exception`). Don't `raise` these.
    - Plain absence ("no such user") → `T | None`, handled in the shell.
    - Programmer/data error that's "impossible" → let it raise (panic). `.unwrap()`
      a `Result` only where a failure would be a bug (e.g. parsing data we wrote).
@@ -60,7 +60,15 @@ distillation. When the two disagree, the guidelines win.
    forward references already work. Do **not** hide type-only imports behind
    `if TYPE_CHECKING` when Pydantic/Typer may read annotations at runtime (that
    is why ruff's `TCH` is deliberately off, and why `Result` is a runtime import
-   in `app/core/user.py`).
+   in the core modules).
+
+8. **Store layout (how it scales).** Interfaces segregated by entity in
+   `app/shell/stores.py`; one backend class implements them all over one database
+   (entity-prefixed methods: `get_user`, `get_team`, …). One core module per
+   entity (`user.py`, `team.py`, `membership.py`), sharing `errors.py` and
+   `result.py`. Adding an entity = a new core module + a focused Protocol + its
+   methods in *every* backend. Let coordination (multi-table loads) accrete in
+   the shell; the core stays values-in, values-out.
 
 ## How to add a feature (recipe)
 
@@ -73,9 +81,11 @@ To add, say, a "change email" capability:
 3. Add a route to `app/shell/http.py` (and/or a CLI command): load the entity
    (I/O), call the pure function, `match` the `Result`, save on success (I/O),
    map errors to status codes. Add the request/response Pydantic models here.
-4. If persistence changed, update the concrete stores (`memory_store.py`,
-   `sqlite_store.py`, `postgres_store.py`) and keep the `UserStore` Protocol in
-   `app/shell/user_store.py` in sync.
+4. If persistence changed, add the method to the right Protocol in
+   `app/shell/stores.py` and implement it in **every** backend (`memory_store.py`,
+   `sqlite_store.py`, `postgres_store.py`). A whole new entity = a new
+   `app/core/<entity>.py` + a focused Protocol in `stores.py` + its methods in
+   each backend.
 5. Tests: one for the pure function passing **values** (no fake, no mock —
    mirror `tests/test_user.py`); one for the shell via `create_app` (mirror
    `tests/test_http.py`). Add a hypothesis property if the core invariant is
@@ -84,8 +94,9 @@ To add, say, a "change email" capability:
 ## Commands
 
 - Run: `uv run uvicorn app.main:app --reload`
-- CLI: `uv run python -m app.shell.cli add <id> <email> <name>` and
-  `uv run python -m app.shell.cli rename <id> <new_name>`
+- CLI: `uv run python -m app.shell.cli --help` (commands: `add-user`,
+  `rename-user`, `add-team`, `add-member`, `update-role`, `remove-member`,
+  `memberships`)
 - Test: `uv run pytest`
 - Type-check (part of the gate, not optional — §13): `uv run --extra postgres mypy`
   (the extra installs SQLAlchemy so the Postgres store is checked against real types)

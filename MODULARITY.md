@@ -5,7 +5,7 @@ multiple front-ends, isolated testing — now that the `UserRepository` port is
 gone and the code is split into a pure **core** and an imperative **shell**.
 
 This is a companion to [`python_guidelines.md`](./python_guidelines.md) (§2),
-grounded in this repo's `User` domain.
+grounded in this repo's users-and-teams domain.
 
 ---
 
@@ -32,7 +32,7 @@ shell?* That's a menu, below.
 | Hexagonal concept | Core/Shell equivalent |
 |---|---|
 | Driven port (`UserRepository`) | usually **nothing** — pass data as values, or return effects as data; a *shell* `Protocol` only if there are ≥2 real backends |
-| Driven adapter (`PostgresUserRepository`) | a concrete shell class (`PostgresUserStore`) |
+| Driven adapter (`PostgresUserRepository`) | a concrete shell class (`PostgresStore`) |
 | Driving port (`UpdateUserProfile`) | the **core function's signature** itself |
 | Driving adapter (`api.py`, `cli.py`) | a shell entry point that calls the core function |
 | Composition root + `dependency_overrides` | `create_app(store)` and ordinary function arguments |
@@ -76,10 +76,10 @@ real, not before.
 
 ```python
 # shell
-store = InMemoryUserStore()
-user = store.get(user_id)
+store = InMemoryStore()
+user = store.get_user(user_id)
 ...
-store.save(updated)
+store.save_user(updated)
 ```
 
 **When:** one backend; or several backends whose orchestration genuinely differs
@@ -92,29 +92,31 @@ to work with any of them (instead of duplicating the load→decide→save
 orchestration per backend), define a `Protocol`. This is what this repo does:
 
 ```python
-# app/shell/user_store.py  — the Protocol lives in the shell, NOT the core,
-# and not inside the HTTP adapter (the CLI builds on the same stores).
+# app/shell/stores.py  — segregated per entity (NOT in the core or HTTP adapter)
 class UserStore(Protocol):
-    def get(self, user_id: UserId) -> User | None: ...
-    def save(self, user: User) -> None: ...
+    def get_user(self, user_id: UserId) -> User | None: ...
+    def save_user(self, user: User) -> None: ...
+
+# ...likewise TeamStore, MembershipStore... composed for the wiring:
+class Store(UserStore, TeamStore, MembershipStore, Protocol): ...
 
 # app/shell/http.py  — one code path, any backend
-def create_app(store: UserStore) -> FastAPI:
+def create_app(store: Store) -> FastAPI:
     ...
 
-# app/main.py  — composition picks one
-_store = SqliteUserStore()          # or InMemoryUserStore(), or PostgresUserStore(dsn=...)
+# app/main.py  — one backend implements all of it (one DB, several tables)
+_store = SqliteStore()          # or InMemoryStore(), or PostgresStore(dsn=...)
 app = create_app(_store)
 ```
 
-`SqliteUserStore`, `InMemoryUserStore`, and `PostgresUserStore` satisfy it
+`SqliteStore`, `InMemoryStore`, and `PostgresStore` each implement all of it
 structurally. This *looks* like the old `UserRepository` port, and the
 distinction is the whole point:
 
 - The old port was imported by the **use case** (the core) and existed so the
   core could be tested against a fake. That coupled logic to an I/O interface.
-- `UserStore` is imported only by **shell** code, exists because there are three
-  production backends, and the core is tested *without* it (pass a `User`,
+- These Protocols are imported only by **shell** code, exist because there are
+  three production backends, and the core is tested *without* them (pass values,
   assert a `Result`). The guidelines explicitly bless this use (§2, final
   paragraph): "valuable when you genuinely have multiple production
   implementations."
@@ -140,8 +142,8 @@ def persist_rename(
         save(result.value)          # shell effect, explicit — not buried in a .map
     return result
 
-# composition: persist_rename(InMemoryUserStore().save, user, raw)
-#              persist_rename(PostgresUserStore(dsn).save, user, raw)
+# composition: persist_rename(InMemoryStore().save_user, user, raw)
+#              persist_rename(PostgresStore(dsn).save_user, user, raw)
 ```
 
 Note this parameterizes a **shell** orchestrator, and the effect (`save`) is
@@ -174,7 +176,7 @@ def change_display_name(user: User, raw: str) -> Result[list[Effect], EmptyDispl
 def interpret(effects: list[Effect], store: UserStore, mailer: Mailer) -> None:
     for e in effects:
         match e:
-            case SaveUser(u):    store.save(u)
+            case SaveUser(u):    store.save_user(u)
             case SendWelcome(to): mailer.send(to)
 ```
 
@@ -227,7 +229,7 @@ Two rules carry over from the guidelines:
   test tempts you to patch something inside the core, the design has leaked I/O
   into it — push that I/O out to the shell.
 - **For the shell `Protocol`, prefer a real in-memory implementation over a
-  mock.** `InMemoryUserStore` *is* the test double — it's a genuine
+  mock.** `InMemoryStore` *is* the test double — it's a genuine
   implementation, not a stand-in, so tests exercise real behavior.
 
 ---
@@ -238,7 +240,7 @@ Two rules carry over from the guidelines:
 |---|---|---|
 | the core needs data to decide | **pass the data as a value** (1a) | `change_display_name(user, …)` |
 | exactly one real backend | **concrete class**, no interface (1b) | — (we have three) |
-| ≥2 real backends, shared shell path | **`Protocol` in the shell** (1c) | `UserStore` + three stores |
+| ≥2 real backends, shared shell path | **`Protocol` in the shell** (1c) | segregated Protocols + 3 backends |
 | a one-method boundary, ≥2 impls | **higher-order function** (1d) | — |
 | a variable set of write effects | **return effect data, shell interprets** (1e) | — (deliberately not) |
 | multiple front-ends | **a shell per entry point**, same core call (Part 2) | `http.py`, `cli.py` |

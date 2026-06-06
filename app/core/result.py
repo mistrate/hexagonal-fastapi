@@ -14,6 +14,7 @@ dataclasses let callers `match` instead (§7.5). Both styles are used here.
 Generics use PEP 695 syntax (`class Ok[T]`, `type Result[T, E] = ...`), which
 this project relies on since it targets Python 3.14.
 """
+
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, NoReturn

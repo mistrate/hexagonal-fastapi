@@ -70,6 +70,14 @@ distillation. When the two disagree, the guidelines win.
    methods in *every* backend. Let coordination (multi-table loads) accrete in
    the shell; the core stays values-in, values-out.
 
+9. **Atomicity for multi-step operations.** If a shell operation does more than
+   one write (a cascade delete, "create team + founding admin"), wrap it in
+   `with store.unit_of_work() as tx:` and write through `tx` — all writes commit
+   together or roll back together (SQL backends use one transaction; the in-memory
+   store snapshots/restores). A cross-table policy like cascade is shell work done
+   uniformly, **not** a DB feature (`ON DELETE CASCADE`) you lean on — the FK stays
+   a backstop, and the rollback path is the same code in tests and prod.
+
 ## How to add a feature (recipe)
 
 To add, say, a "change email" capability:
@@ -80,7 +88,8 @@ To add, say, a "change email" capability:
    with a typed error for each expected failure. No store parameter.
 3. Add a route to `app/shell/http.py` (and/or a CLI command): load the entity
    (I/O), call the pure function, `match` the `Result`, save on success (I/O),
-   map errors to status codes. Add the request/response Pydantic models here.
+   map errors to status codes. Add the request/response Pydantic models here. If
+   success means more than one write, wrap them in `with store.unit_of_work():`.
 4. If persistence changed, add the method to the right Protocol in
    `app/shell/stores.py` and implement it in **every** backend (`memory_store.py`,
    `sqlite_store.py`, `postgres_store.py`). A whole new entity = a new
@@ -95,9 +104,10 @@ To add, say, a "change email" capability:
 
 - Run: `uv run uvicorn app.main:app --reload`
 - CLI: `uv run python -m app.shell.cli --help` (commands: `add-user`,
-  `rename-user`, `add-team`, `add-member`, `update-role`, `remove-member`,
-  `memberships`)
-- Test: `uv run pytest`
+  `rename-user`, `delete-user`, `add-team`, `add-member`, `update-role`,
+  `remove-member`, `memberships`)
+- Test: `uv run pytest` — add `--extra postgres` to also run the real-Postgres
+  integration tests (testcontainers; needs Docker; they skip cleanly otherwise)
 - Type-check (part of the gate, not optional — §13): `uv run --extra postgres mypy`
   (the extra installs SQLAlchemy so the Postgres store is checked against real types)
 - Format & organize imports: `uv run ruff format . && uv run ruff check --fix .`

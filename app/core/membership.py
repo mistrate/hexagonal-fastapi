@@ -97,7 +97,7 @@ def change_role(
     if existing is None:
         return Err(NotAMember())
     demoting_admin = existing.role is MembershipRole.ADMIN and new_role is not MembershipRole.ADMIN
-    if demoting_admin and _admin_count(team_members) <= 1:
+    if demoting_admin and admin_count(team_members) <= 1:
         return Err(LastAdmin())
     return Ok(replace(existing, role=new_role))
 
@@ -107,7 +107,7 @@ def remove_member(
 ) -> Result[Membership, NotAMember | LastAdmin]:
     if existing is None:
         return Err(NotAMember())
-    if existing.role is MembershipRole.ADMIN and _admin_count(team_members) <= 1:
+    if existing.role is MembershipRole.ADMIN and admin_count(team_members) <= 1:
         return Err(LastAdmin())
     return Ok(existing)
 
@@ -124,5 +124,5 @@ def describe_change_error(error: NotAMember | LastAdmin) -> str:
             assert_never(unreachable)
 
 
-def _admin_count(members: tuple[Membership, ...]) -> int:
+def admin_count(members: tuple[Membership, ...]) -> int:
     return sum(1 for m in members if m.role is MembershipRole.ADMIN)

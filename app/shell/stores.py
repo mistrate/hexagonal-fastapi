@@ -21,6 +21,7 @@ of keeping multiple backends, and the reason §2 says to keep a store `Protocol`
 only when you genuinely have multiple production implementations.
 """
 
+from contextlib import AbstractContextManager
 from typing import Protocol
 
 from app.core.membership import Membership
@@ -31,6 +32,7 @@ from app.core.user import User, UserId
 class UserStore(Protocol):
     def get_user(self, user_id: UserId) -> User | None: ...
     def save_user(self, user: User) -> None: ...
+    def delete_user(self, user_id: UserId) -> None: ...  # deletes the user row only
 
 
 class TeamStore(Protocol):
@@ -49,4 +51,12 @@ class MembershipStore(Protocol):
 class Store(UserStore, TeamStore, MembershipStore, Protocol):
     """Every capability a delivery mechanism needs; one backend object satisfies
     all of it. A helper that needs only one slice can still take the narrower
-    Protocol above."""
+    Protocol above.
+
+    `unit_of_work` makes a multi-step shell operation atomic: the yielded store's
+    writes all commit together when the block exits normally, or all roll back if
+    it raises (a connection error included). The SQL backends use one transaction;
+    the in-memory store snapshots and restores. So the shell never has to leave
+    half-finished state behind, on any backend."""
+
+    def unit_of_work(self) -> AbstractContextManager[Store]: ...

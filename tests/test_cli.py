@@ -107,3 +107,21 @@ def test_can_remove_admin_when_another_exists(tmp_path: Path) -> None:
     assert _run(tmp_path, "add-user", "u1", "ada@example.com", "Ada").exit_code == 0
     assert _run(tmp_path, "add-member", "t1", "u1", "admin").exit_code == 0
     assert _run(tmp_path, "remove-member", "t1", "admin").exit_code == 0
+
+
+# --- delete user ---
+
+
+def test_delete_user_cascades(tmp_path: Path) -> None:
+    _seed_team(tmp_path)
+    assert _run(tmp_path, "add-user", "u1", "ada@example.com", "Ada").exit_code == 0
+    assert _run(tmp_path, "add-member", "t1", "u1", "member").exit_code == 0
+    assert _run(tmp_path, "delete-user", "u1").exit_code == 0
+    assert _run(tmp_path, "memberships", "u1").exit_code == 1  # user gone → not found
+
+
+def test_delete_user_who_is_sole_admin_fails(tmp_path: Path) -> None:
+    _seed_team(tmp_path)
+    result = _run(tmp_path, "delete-user", "admin")
+    assert result.exit_code == 1
+    assert "sole admin" in result.stderr

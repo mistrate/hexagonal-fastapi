@@ -15,12 +15,14 @@ from typing import assert_never
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from app.core.accounts import decide_user_deletion, describe_sole_admin
 from app.core.membership import (
     LastAdmin,
     Membership,
     MembershipRole,
     NotAMember,
     add_member,
+    admin_count,
     change_role,
     describe_change_error,
     found_team,
@@ -143,6 +145,30 @@ def create_app(store: Store) -> FastAPI:
             raise HTTPException(status_code=404, detail="user not found")
         return [_membership_response(m) for m in store.list_memberships_for_user(UserId(user_id))]
 
+    @app.delete("/users/{user_id}", status_code=204)
+    def delete_user_route(user_id: str) -> None:
+        uid = UserId(user_id)
+        user = store.get_user(uid)
+        if user is None:
+            raise HTTPException(status_code=404, detail="user not found")
+        memberships = store.list_memberships_for_user(uid)
+        sole_admin_of = tuple(
+            m.team_id
+            for m in memberships
+            if m.role is MembershipRole.ADMIN
+            and admin_count(store.list_memberships_for_team(m.team_id)) == 1
+        )
+        match decide_user_deletion(user, sole_admin_of):
+            case Ok(deleted_id):
+                # Cascade in one transaction — a mid-cascade failure rolls the whole
+                # thing back (atomic), uniform across backends; the FK is a backstop.
+                with store.unit_of_work() as tx:
+                    for membership in memberships:
+                        tx.delete_membership(deleted_id, membership.team_id)
+                    tx.delete_user(deleted_id)
+            case Err(error):
+                raise HTTPException(status_code=409, detail=describe_sole_admin(error))
+
     # --- teams ---
 
     @app.post("/teams", status_code=201, response_model=TeamResponse)
@@ -154,8 +180,10 @@ def create_app(store: Store) -> FastAPI:
             raise HTTPException(status_code=404, detail="admin user not found")
         match found_team(body.id, body.name, founder):
             case Ok((team, admin)):
-                store.save_team(team)
-                store.save_membership(admin)  # two writes — not atomic here (see sqlite_store)
+                # Team + founding admin commit together — never a team with no admin.
+                with store.unit_of_work() as tx:
+                    tx.save_team(team)
+                    tx.save_membership(admin)
                 return TeamResponse(id=team.id, name=team.name.value)
             case Err(_):
                 raise HTTPException(status_code=422, detail="team name cannot be empty")

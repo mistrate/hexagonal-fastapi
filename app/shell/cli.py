@@ -11,9 +11,11 @@ from typing import Annotated
 
 import typer
 
+from app.core.accounts import decide_user_deletion, describe_sole_admin
 from app.core.membership import (
     MembershipRole,
     add_member as add_member_to_team,
+    admin_count,
     change_role,
     describe_change_error,
     found_team,
@@ -85,6 +87,37 @@ def rename_user(
             raise typer.Exit(code=1)
 
 
+@cli.command()
+def delete_user(
+    user_id: Annotated[str, typer.Argument(help="ID of the user to delete.")],
+    db: Annotated[str, typer.Option(help="SQLite database file.")] = DEFAULT_DB_PATH,
+) -> None:
+    """Delete a user, cascading their team memberships."""
+    store = SqliteStore(db)
+    uid = UserId(user_id)
+    user = store.get_user(uid)
+    if user is None:
+        typer.echo(f"error: user {user_id!r} not found", err=True)
+        raise typer.Exit(code=1)
+    memberships = store.list_memberships_for_user(uid)
+    sole_admin_of = tuple(
+        m.team_id
+        for m in memberships
+        if m.role is MembershipRole.ADMIN
+        and admin_count(store.list_memberships_for_team(m.team_id)) == 1
+    )
+    match decide_user_deletion(user, sole_admin_of):
+        case Ok(deleted_id):
+            with store.unit_of_work() as tx:  # cascade atomically
+                for membership in memberships:
+                    tx.delete_membership(deleted_id, membership.team_id)
+                tx.delete_user(deleted_id)
+            typer.echo(f"deleted user {user_id!r} ({len(memberships)} membership(s) removed)")
+        case Err(error):
+            typer.echo(f"error: {describe_sole_admin(error)}", err=True)
+            raise typer.Exit(code=1)
+
+
 # --- teams ---
 
 
@@ -106,8 +139,9 @@ def add_team(
         raise typer.Exit(code=1)
     match found_team(team_id, name, founder):
         case Ok((team, admin)):
-            store.save_team(team)
-            store.save_membership(admin)
+            with store.unit_of_work() as tx:  # team + founding admin commit together
+                tx.save_team(team)
+                tx.save_membership(admin)
             typer.echo(f"added team {team.id} -> {team.name.value!r} (admin: {admin.user_id})")
         case Err(_):
             typer.echo("invalid: team name cannot be empty", err=True)

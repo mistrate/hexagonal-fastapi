@@ -53,18 +53,22 @@ app/
     team.py             TeamName, Team; create_team
     membership.py       MembershipRole, Membership; add_member / change_role / remove_member
                         (total transitions over `Membership | None`, §4)
+    accounts.py         cross-aggregate rule: can't delete a user who is a team's sole admin
   shell/                IMPERATIVE SHELL — I/O at the edges
     stores.py           UserStore / TeamStore / MembershipStore Protocols + combined Store
-    memory_store.py     InMemoryStore   (tests / local)
+                        (incl. unit_of_work for atomic multi-step operations)
+    memory_store.py     InMemoryStore   (tests / local; UoW = snapshot/restore)
     sqlite_store.py     SqliteStore     (default; stdlib sqlite3, 3 tables, FKs)
-    postgres_store.py   PostgresStore   (optional `postgres` extra)
+    postgres_store.py   PostgresStore   (optional `postgres` extra; Engine or Connection)
     http.py             FastAPI adapter + create_app
     cli.py              Typer CLI — one command per operation
   main.py               composition root (pick a backend, build the app)
 tests/
-  test_user.py test_team.py test_membership.py   pure core — no fakes, no mocks
-  test_store.py         the SQLite store across all 3 tables, against a temp file
-  test_http.py          the shell via create_app — no override seam
+  test_user/team/membership/accounts.py   pure core — no fakes, no mocks
+  test_store.py         the SQLite store across all 3 tables (temp file)
+  test_unit_of_work.py  atomicity: commit / rollback over memory + sqlite
+  test_http.py, test_cli.py   the shell via create_app and Typer's CliRunner
+  test_postgres_integration.py   real Postgres via testcontainers (needs Docker; auto-skips)
   test_properties.py    hypothesis property tests on the pure core (§13)
 ```
 
@@ -97,10 +101,12 @@ Two costs worth seeing plainly:
   growth. That is the real price of keeping multiple backends — and the reason
   §2 says to keep a store `Protocol` only when you genuinely have several
   production implementations.
-- **Transactions cross operations.** With a fresh connection per call,
-  "check-then-insert" (add-member) is not atomic. A system that needs that would
-  pass a transaction/session down instead of a connection-per-op store. The toy
-  notes this rather than solving it.
+- **Multi-step operations must be atomic.** A cascade delete, or "create team +
+  founding admin," is several writes; a failure mid-way must not leave half-written
+  state. The shell wraps these in `store.unit_of_work()`: the SQL backends run one
+  transaction (all commit, or all roll back), and the in-memory store snapshots
+  and restores — so the rollback path is the *same code* in tests and prod.
+  (`unit_of_work` is itself one more method on every backend — the N×M tax again.)
 
 See [`MODULARITY.md`](./MODULARITY.md) for the full menu of ways to keep a
 boundary swappable in this paradigm.
@@ -115,14 +121,17 @@ uv run uvicorn app.main:app --reload
 ```bash
 curl -X POST localhost:8000/users -H 'content-type: application/json' \
   -d '{"id": "u1", "email": "ada@example.com", "display_name": "Ada"}'
+curl -X POST localhost:8000/users -H 'content-type: application/json' \
+  -d '{"id": "u2", "email": "bob@example.com", "display_name": "Bob"}'
 curl -X POST localhost:8000/teams -H 'content-type: application/json' \
-  -d '{"id": "t1", "name": "Core"}'
+  -d '{"id": "t1", "name": "Core", "admin_user_id": "u1"}'   # a team is created with an admin
 curl -X POST localhost:8000/teams/t1/members -H 'content-type: application/json' \
-  -d '{"user_id": "u1", "role": "member"}'
-curl -X PUT  localhost:8000/teams/t1/members/u1 -H 'content-type: application/json' \
+  -d '{"user_id": "u2", "role": "member"}'
+curl -X PUT  localhost:8000/teams/t1/members/u2 -H 'content-type: application/json' \
   -d '{"role": "admin"}'
-curl localhost:8000/users/u1/memberships
-curl -X DELETE localhost:8000/teams/t1/members/u1
+curl localhost:8000/users/u2/memberships
+curl -X DELETE localhost:8000/teams/t1/members/u2
+curl -X DELETE localhost:8000/users/u2     # delete user — cascades memberships, atomically
 ```
 
 The CLI is the same core, different shell (Typer). SQLite is file-backed, so each
@@ -130,25 +139,30 @@ command is a separate, realistic invocation:
 
 ```bash
 uv run python -m app.shell.cli add-user u1 ada@example.com Ada
-uv run python -m app.shell.cli add-team t1 Core
-uv run python -m app.shell.cli add-member t1 u1 member
-uv run python -m app.shell.cli update-role t1 u1 admin
-uv run python -m app.shell.cli memberships u1
-uv run python -m app.shell.cli remove-member t1 u1
+uv run python -m app.shell.cli add-user u2 bob@example.com Bob
+uv run python -m app.shell.cli add-team t1 Core u1        # u1 is the founding admin
+uv run python -m app.shell.cli add-member t1 u2 member
+uv run python -m app.shell.cli update-role t1 u2 admin
+uv run python -m app.shell.cli memberships u2
+uv run python -m app.shell.cli remove-member t1 u2
+uv run python -m app.shell.cli delete-user u2            # cascades memberships, atomically
 uv run python -m app.shell.cli --help
 ```
 
 ## The quality gate
 
 ```bash
-uv run --extra postgres mypy   # strict; --extra so the Postgres store is checked against real types
+uv run --extra postgres mypy    # strict; --extra so the Postgres store is checked against real types
 uv run ruff check .
-uv run pytest
+uv run --extra postgres pytest  # also runs the real-Postgres integration tests (needs Docker)
 ```
 
-(`uv run mypy` without the extra also passes — the `sqlalchemy.*` override
-tolerates the missing import — but you only get real type-checking of the
-Postgres store when the extra is installed.)
+`uv run pytest` (no extra, no Docker) runs everything except the Postgres
+integration tests, which skip cleanly. Those start one throwaway Postgres
+container via testcontainers, create the schema **once**, and run each test in a
+transaction rolled back at the end (savepoints for nested writes) — fast and
+isolated. `uv run mypy` without the extra also passes (the `sqlalchemy.*`
+override tolerates the missing import).
 
 ## Swapping the backend
 

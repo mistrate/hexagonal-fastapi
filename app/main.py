@@ -18,7 +18,10 @@ from app.shell.sqlite_store import SqliteStore
 _store = SqliteStore()
 # from app.shell.memory_store import InMemoryStore
 # _store = InMemoryStore()
-# from app.shell.postgres_store import PostgresStore
-# _store = PostgresStore(dsn="postgresql://localhost/app")
+# from sqlalchemy import create_engine
+# from app.shell.postgres_store import PostgresStore, create_schema
+# _engine = create_engine("postgresql+psycopg://localhost/app")
+# create_schema(_engine)  # once — a real app runs migrations instead
+# _store = PostgresStore(_engine)
 
 app = create_app(_store)

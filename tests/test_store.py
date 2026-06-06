@@ -76,3 +76,11 @@ def test_data_persists_across_instances(tmp_path: Path) -> None:
     path = str(tmp_path / "app.db")
     SqliteStore(path).save_user(a_user())
     assert SqliteStore(path).get_user(UserId("u1")) == a_user()
+
+
+def test_delete_user_removes_only_the_user(tmp_path: Path) -> None:
+    # The store does a single-row delete; cascading is the shell's job, not the store's.
+    store = SqliteStore(str(tmp_path / "app.db"))
+    store.save_user(a_user())
+    store.delete_user(UserId("u1"))
+    assert store.get_user(UserId("u1")) is None

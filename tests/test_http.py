@@ -7,6 +7,8 @@ including the "at least one admin" invariant.
 
 from fastapi.testclient import TestClient
 
+from app.core.membership import Membership, MembershipRole
+from app.core.team import Team, TeamId, TeamName
 from app.core.user import DisplayName, Email, User, UserId
 from app.shell.http import create_app
 from app.shell.memory_store import InMemoryStore
@@ -165,3 +167,60 @@ def test_can_remove_an_admin_when_another_exists() -> None:
 
 def test_list_memberships_unknown_user_404() -> None:
     assert fresh_client().get("/users/ghost/memberships").status_code == 404
+
+
+# --- delete user (shell-side cascade + invariant guard) ---
+
+
+def test_delete_user_cascades_memberships() -> None:
+    client = _client_with_team()  # `admin` is sole admin of t1
+    client.post("/users", json={"id": "u1", "email": "ada@example.com", "display_name": "Ada"})
+    client.post("/teams/t1/members", json={"user_id": "u1", "role": "member"})
+    assert client.delete("/users/u1").status_code == 204
+    # Re-create the same id; a resurfacing membership would prove an orphan was left.
+    client.post("/users", json={"id": "u1", "email": "ada@example.com", "display_name": "Ada"})
+    assert client.get("/users/u1/memberships").json() == []
+
+
+def test_delete_user_who_is_sole_admin_409() -> None:
+    assert _client_with_team().delete("/users/admin").status_code == 409
+
+
+def test_delete_user_with_no_memberships_204() -> None:
+    client = fresh_client()
+    client.post("/users", json={"id": "u1", "email": "ada@example.com", "display_name": "Ada"})
+    assert client.delete("/users/u1").status_code == 204
+    assert client.get("/users/u1/memberships").status_code == 404
+
+
+def test_delete_unknown_user_404() -> None:
+    assert fresh_client().delete("/users/ghost").status_code == 404
+
+
+def test_delete_user_cascade_is_atomic() -> None:
+    # A store whose user-delete fails after the membership-deletes have run.
+    class BoomOnUserDelete(InMemoryStore):
+        def delete_user(self, user_id: UserId) -> None:
+            raise RuntimeError("connection lost")
+
+    store = BoomOnUserDelete()
+    boss = User(
+        id=UserId("boss"),
+        email=Email.parse("boss@example.com").unwrap(),
+        display_name=DisplayName.parse("Boss").unwrap(),
+    )
+    ada = User(
+        id=UserId("u1"),
+        email=Email.parse("ada@example.com").unwrap(),
+        display_name=DisplayName.parse("Ada").unwrap(),
+    )
+    store.save_user(boss)
+    store.save_user(ada)
+    store.save_team(Team(id=TeamId("t1"), name=TeamName.parse("Core").unwrap()))
+    store.save_membership(Membership(UserId("boss"), TeamId("t1"), MembershipRole.ADMIN))
+    store.save_membership(Membership(UserId("u1"), TeamId("t1"), MembershipRole.MEMBER))
+
+    client = TestClient(create_app(store), raise_server_exceptions=False)
+    assert client.delete("/users/u1").status_code == 500
+    # The cascade rolled back: u1's membership was not left half-deleted.
+    assert store.get_membership(UserId("u1"), TeamId("t1")) is not None

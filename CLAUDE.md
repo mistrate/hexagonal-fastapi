@@ -100,7 +100,9 @@ To add, say, a "change email" capability:
 - Test: `uv run pytest`
 - Type-check (part of the gate, not optional — §13): `uv run --extra postgres mypy`
   (the extra installs SQLAlchemy so the Postgres store is checked against real types)
-- Lint: `uv run ruff check .`
+- Format & organize imports: `uv run ruff format . && uv run ruff check --fix .`
+  — let ruff wrap long lines and sort imports; don't hand-wrap or hand-sort.
+- Lint (gate, check-only): `uv run ruff check .`
 - Postgres backend deps: `uv sync --extra postgres`
 
 ## Anti-patterns to reject

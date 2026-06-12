@@ -11,23 +11,23 @@ dependencies = [
     "pydantic==2.13.4",     # imported directly at the HTTP boundary (app/shell/http.py)
     "typer==0.26.7",        # the CLI delivery mechanism (app/shell/cli.py)
     "httpx2==2.3.0",        # required by fastapi.testclient (starlette selects httpx2 when present)
+    "sqlalchemy==2.0.50",   # the SQL backend (app/shell/sql_store.py): typed schema, pooling, dialects
 ]
 
-# Optional second backend: the Postgres store (app/shell/postgres_store.py).
+# Optional Postgres driver for the SQL store (SQLite needs nothing extra).
 # Install with: uv sync --extra postgres
 [project.optional-dependencies]
 postgres = [
-    "sqlalchemy==2.0.50",
     "psycopg[binary]==3.3.4",
 ]
 
 # Dev tooling. The guidelines (§13) treat the type checker as part of the
-# language, not a linter: mypy --strict, ruff, pytest, hypothesis.
+# language, not a linter: ty, ruff, pytest, hypothesis.
 [dependency-groups]
 dev = [
     "pytest==9.0.3",
     "hypothesis==6.155.2",
-    "mypy==2.1.0",
+    "ty==0.0.49",
     "ruff==0.15.16",
     "testcontainers[postgres]==4.14.2",  # real-Postgres integration tests (needs Docker)
 ]
@@ -38,18 +38,13 @@ dev = [
 testpaths = ["tests"]
 pythonpath = ["."]
 
-[tool.mypy]
-strict = true
-python_version = "3.14"
-files = ["app", "tests"]
+# ty (Astral's type checker) has no strict/lax switch — its default rule set is
+# the gate. Run with: uv run ty check
+[tool.ty.environment]
+python-version = "3.14"
 
-[[tool.mypy.overrides]]
-# Fallback only. The canonical typing path installs the `postgres` extra
-# (`uv run --extra postgres mypy`), so mypy checks the store against SQLAlchemy's
-# real types. This just keeps `uv run mypy` (without the extra) from hard-failing
-# on the import — interop tolerated at the edge (§16).
-module = ["sqlalchemy.*", "testcontainers.*"]
-ignore_missing_imports = true
+[tool.ty.src]
+include = ["app", "tests"]
 
 [tool.ruff]
 target-version = "py314"

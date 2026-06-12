@@ -28,8 +28,8 @@ distillation. When the two disagree, the guidelines win.
    happen in the shell, around the call. Store `Protocol`s are allowed **only** in
    the shell (`app/shell/stores.py`: `UserStore`/`TeamStore`/`MembershipStore`,
    composed into `Store`) and **only** to choose between genuinely-multiple
-   production backends (`SqliteStore` (default), `InMemoryStore`, `PostgresStore`)
-   — never to make the core testable. If you can test it by passing a value, you
+   production backends (`SqlStore` over a SQLite (default) or Postgres engine,
+   `InMemoryStore`) — never to make the core testable. If you can test it by passing a value, you
    don't need the Protocol. For the full menu, see [`MODULARITY.md`](./MODULARITY.md).
 
 3. **Parse, don't validate.** Untyped input (`str`, request bodies, DB rows)
@@ -54,6 +54,13 @@ distillation. When the two disagree, the guidelines win.
 
 6. **Framework types stay in the shell.** Pydantic models, `HTTPException`, SQL,
    status codes — all live under `app/shell/`. The core never sees them.
+   SQLAlchemy is allowed under one bounded exception (§16: wrap libraries at the
+   edge): the declarative `*Row` classes in `app/shell/db_types.py` are **typed
+   table metadata only** — they define the schema once for both SQL dialects and
+   give type-checked column references and result rows. They are never
+   instantiated, never leave `sql_store.py`/`main.py`, and `Session` is never
+   imported — every write is an explicit `conn.execute(...)` on a Core
+   connection in `sql_store.py`.
 
 7. **Python 3.14 idioms.** PEP 695 generics (`class Ok[T]`, `type Result[T, E] =
    …`). No `from __future__ import annotations` — PEP 649 defers evaluation, so
@@ -92,8 +99,9 @@ To add, say, a "change email" capability:
    success means more than one write, wrap them in `with store.unit_of_work():`.
 4. If persistence changed, add the method to the right Protocol in
    `app/shell/stores.py` and implement it in **every** backend (`memory_store.py`,
-   `sqlite_store.py`, `postgres_store.py`). A whole new entity = a new
-   `app/core/<entity>.py` + a focused Protocol in `stores.py` + its methods in
+   `sql_store.py` — the SQL one covers SQLite and Postgres from a single typed
+   schema). A whole new entity = a new `app/core/<entity>.py` + a focused
+   Protocol in `stores.py` + a `*Row` model in `db_types.py` + its methods in
    each backend.
 5. Tests: one for the pure function passing **values** (no fake, no mock —
    mirror `tests/test_user.py`); one for the shell via `create_app` (mirror
@@ -108,12 +116,13 @@ To add, say, a "change email" capability:
   `remove-member`, `memberships`)
 - Test: `uv run pytest` — add `--extra postgres` to also run the real-Postgres
   integration tests (testcontainers; needs Docker; they skip cleanly otherwise)
-- Type-check (part of the gate, not optional — §13): `uv run --extra postgres mypy`
-  (the extra installs SQLAlchemy so the Postgres store is checked against real types)
+- Type-check (part of the gate, not optional — §13): `uv run ty check`
+  (SQLAlchemy is a base dependency, so the SQL store is checked against real
+  types)
 - Format & organize imports: `uv run ruff format . && uv run ruff check --fix .`
   — let ruff wrap long lines and sort imports; don't hand-wrap or hand-sort.
 - Lint (gate, check-only): `uv run ruff check .`
-- Postgres backend deps: `uv sync --extra postgres`
+- Postgres driver: `uv sync --extra postgres`
 
 ## Anti-patterns to reject
 
@@ -126,5 +135,7 @@ To add, say, a "change email" capability:
 - Bare `str`/`dict[str, Any]` in `app/core/` signatures; `bool`/`Optional` field
   combinations that encode a hidden state machine.
 - Importing `fastapi`/`sqlalchemy`/`pydantic` anywhere under `app/core/`.
+- Using a SQLAlchemy `Session`, instantiating a `*Row`, or letting `*Row` types
+  out of the SQL store — `db_types.py` is schema metadata, not a mutation layer.
 - Business logic in a route handler — the handler is shell; it loads, calls the
   core, and performs effects.

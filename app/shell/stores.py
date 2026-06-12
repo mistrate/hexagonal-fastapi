@@ -6,7 +6,7 @@ Two choices keep it from becoming a god-object:
 * **Interfaces are segregated by entity** (`UserStore`, `TeamStore`,
   `MembershipStore`) — interface segregation, so a consumer can depend on just
   the slice it needs. `Store` composes them for the composition root.
-* **The implementation stays unified**: one backend class (e.g. `SqliteStore`)
+* **The implementation stays unified**: one backend class (e.g. `SqlStore`)
   implements all of them over one database with several tables. Adding an entity
   is "a focused Protocol here + a few methods on each backend," not a new
   abstraction the core depends on.
@@ -15,10 +15,11 @@ Methods are entity-prefixed (`get_user`, `get_team`, …) precisely because one
 object provides all of them — a single `get` cannot serve three entities.
 
 These live in the SHELL; the core never imports them (§2). And note the real
-cost: every method here must be implemented in *every* backend
-(`memory_store`, `sqlite_store`, `postgres_store`). That N×M growth is the price
-of keeping multiple backends, and the reason §2 says to keep a store `Protocol`
-only when you genuinely have multiple production implementations.
+cost: every method here must be implemented in *every* backend (`memory_store`,
+`sql_store` — the SQL one at least covers both dialects from a single typed
+schema). That N×M growth is the price of keeping multiple backends, and the
+reason §2 says to keep a store `Protocol` only when you genuinely have multiple
+production implementations.
 """
 
 from contextlib import AbstractContextManager

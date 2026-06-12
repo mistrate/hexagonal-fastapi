@@ -32,7 +32,7 @@ shell?* That's a menu, below.
 | Hexagonal concept | Core/Shell equivalent |
 |---|---|
 | Driven port (`UserRepository`) | usually **nothing** — pass data as values, or return effects as data; a *shell* `Protocol` only if there are ≥2 real backends |
-| Driven adapter (`PostgresUserRepository`) | a concrete shell class (`PostgresStore`) |
+| Driven adapter (`PostgresUserRepository`) | a concrete shell class (`SqlStore`) |
 | Driving port (`UpdateUserProfile`) | the **core function's signature** itself |
 | Driving adapter (`api.py`, `cli.py`) | a shell entry point that calls the core function |
 | Composition root + `dependency_overrides` | `create_app(store)` and ordinary function arguments |
@@ -105,18 +105,18 @@ def create_app(store: Store) -> FastAPI:
     ...
 
 # app/main.py  — one backend implements all of it (one DB, several tables)
-_store = SqliteStore()          # or InMemoryStore(), or PostgresStore(dsn=...)
+_store = SqlStore(create_sqlite_engine())   # or InMemoryStore(), or SqlStore(pg_engine)
 app = create_app(_store)
 ```
 
-`SqliteStore`, `InMemoryStore`, and `PostgresStore` each implement all of it
-structurally. This *looks* like the old `UserRepository` port, and the
-distinction is the whole point:
+`SqlStore` (one class; the engine decides SQLite vs Postgres) and
+`InMemoryStore` each implement all of it structurally. This *looks* like the
+old `UserRepository` port, and the distinction is the whole point:
 
 - The old port was imported by the **use case** (the core) and existed so the
   core could be tested against a fake. That coupled logic to an I/O interface.
 - These Protocols are imported only by **shell** code, exist because there are
-  three production backends, and the core is tested *without* them (pass values,
+  multiple production backends, and the core is tested *without* them (pass values,
   assert a `Result`). The guidelines explicitly bless this use (§2, final
   paragraph): "valuable when you genuinely have multiple production
   implementations."
@@ -143,7 +143,7 @@ def persist_rename(
     return result
 
 # composition: persist_rename(InMemoryStore().save_user, user, raw)
-#              persist_rename(PostgresStore(dsn).save_user, user, raw)
+#              persist_rename(SqlStore(engine).save_user, user, raw)
 ```
 
 Note this parameterizes a **shell** orchestrator, and the effect (`save`) is
@@ -240,7 +240,7 @@ Two rules carry over from the guidelines:
 |---|---|---|
 | the core needs data to decide | **pass the data as a value** (1a) | `change_display_name(user, …)` |
 | exactly one real backend | **concrete class**, no interface (1b) | — (we have three) |
-| ≥2 real backends, shared shell path | **`Protocol` in the shell** (1c) | segregated Protocols + 3 backends |
+| ≥2 real backends, shared shell path | **`Protocol` in the shell** (1c) | segregated Protocols + `SqlStore`/`InMemoryStore` |
 | a one-method boundary, ≥2 impls | **higher-order function** (1d) | — |
 | a variable set of write effects | **return effect data, shell interprets** (1e) | — (deliberately not) |
 | multiple front-ends | **a shell per entry point**, same core call (Part 2) | `http.py`, `cli.py` |

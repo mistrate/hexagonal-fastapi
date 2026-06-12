@@ -24,12 +24,18 @@ from app.core.membership import (
 from app.core.result import Err, Ok
 from app.core.team import TeamId
 from app.core.user import UserId, change_display_name, create_user, describe
-from app.shell.sqlite_store import DEFAULT_DB_PATH, SqliteStore
+from app.shell.sql_store import DEFAULT_DB_PATH, SqlStore, create_schema, create_sqlite_engine
 
 cli = typer.Typer(
     help="Manage users and teams — a CLI shell around the same pure core as the API.",
     no_args_is_help=True,
 )
+
+
+def _store(db: str) -> SqlStore:
+    engine = create_sqlite_engine(db)
+    create_schema(engine)
+    return SqlStore(engine)
 
 
 def _parse_role_or_exit(raw: str) -> MembershipRole:
@@ -52,7 +58,7 @@ def add_user(
     db: Annotated[str, typer.Option(help="SQLite database file.")] = DEFAULT_DB_PATH,
 ) -> None:
     """Add a user."""
-    store = SqliteStore(db)
+    store = _store(db)
     if store.get_user(UserId(user_id)) is not None:
         typer.echo(f"error: user {user_id!r} already exists", err=True)
         raise typer.Exit(code=1)
@@ -73,7 +79,7 @@ def rename_user(
     db: Annotated[str, typer.Option(help="SQLite database file.")] = DEFAULT_DB_PATH,
 ) -> None:
     """Change a user's display name."""
-    store = SqliteStore(db)
+    store = _store(db)
     user = store.get_user(UserId(user_id))
     if user is None:
         typer.echo(f"error: user {user_id!r} not found (add it first)", err=True)
@@ -93,7 +99,7 @@ def delete_user(
     db: Annotated[str, typer.Option(help="SQLite database file.")] = DEFAULT_DB_PATH,
 ) -> None:
     """Delete a user, cascading their team memberships."""
-    store = SqliteStore(db)
+    store = _store(db)
     uid = UserId(user_id)
     user = store.get_user(uid)
     if user is None:
@@ -129,7 +135,7 @@ def add_team(
     db: Annotated[str, typer.Option(help="SQLite database file.")] = DEFAULT_DB_PATH,
 ) -> None:
     """Add a team with its founding admin (a team is created with >=1 admin)."""
-    store = SqliteStore(db)
+    store = _store(db)
     if store.get_team(TeamId(team_id)) is not None:
         typer.echo(f"error: team {team_id!r} already exists", err=True)
         raise typer.Exit(code=1)
@@ -159,7 +165,7 @@ def add_member(
     db: Annotated[str, typer.Option(help="SQLite database file.")] = DEFAULT_DB_PATH,
 ) -> None:
     """Add a user to a team with a role."""
-    store = SqliteStore(db)
+    store = _store(db)
     parsed_role = _parse_role_or_exit(role)
     user = store.get_user(UserId(user_id))
     if user is None:
@@ -187,7 +193,7 @@ def update_role(
     db: Annotated[str, typer.Option(help="SQLite database file.")] = DEFAULT_DB_PATH,
 ) -> None:
     """Change a user's role in a team."""
-    store = SqliteStore(db)
+    store = _store(db)
     parsed_role = _parse_role_or_exit(role)
     existing = store.get_membership(UserId(user_id), TeamId(team_id))
     team_members = store.list_memberships_for_team(TeamId(team_id))
@@ -207,7 +213,7 @@ def remove_member(
     db: Annotated[str, typer.Option(help="SQLite database file.")] = DEFAULT_DB_PATH,
 ) -> None:
     """Remove a user from a team."""
-    store = SqliteStore(db)
+    store = _store(db)
     existing = store.get_membership(UserId(user_id), TeamId(team_id))
     team_members = store.list_memberships_for_team(TeamId(team_id))
     match remove_member_from_team(existing, team_members):
@@ -225,7 +231,7 @@ def memberships(
     db: Annotated[str, typer.Option(help="SQLite database file.")] = DEFAULT_DB_PATH,
 ) -> None:
     """List the teams a user belongs to."""
-    store = SqliteStore(db)
+    store = _store(db)
     if store.get_user(UserId(user_id)) is None:
         typer.echo(f"error: user {user_id!r} not found", err=True)
         raise typer.Exit(code=1)

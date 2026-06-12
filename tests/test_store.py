@@ -10,13 +10,13 @@ from pathlib import Path
 from app.core.membership import Membership, MembershipRole
 from app.core.team import Team, TeamId, TeamName
 from app.core.user import DisplayName, Email, User, UserId
-from app.shell.sql_store import SqlStore, create_schema, create_sqlite_engine
+from app.shell.database import Store, create_store, run_migrations
 
 
-def sqlite_store(path: str) -> SqlStore:
-    engine = create_sqlite_engine(path)
-    create_schema(engine)
-    return SqlStore(engine)
+def sqlite_store(path: str) -> Store:
+    url = f"sqlite:///{path}"
+    run_migrations(url)  # the store performs no DDL — migrate the temp file first
+    return create_store(url)
 
 
 def a_user(user_id: str = "u1", name: str = "Ada") -> User:

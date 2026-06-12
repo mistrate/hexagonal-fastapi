@@ -4,8 +4,9 @@ This is the repo's one sanctioned ORM exception (guidelines §16: wrap libraries
 at the edge). The `*Row` classes exist for what the declarative layer gives the
 type checker — column references that can't be typo'd (`UserRow.email`, not
 `"email"`) and typed result rows from `select(...)` — and for defining the
-schema once for every SQL dialect (`Base.metadata` replaces per-backend DDL
-strings). What we deliberately do NOT use is the ORM's mutation machinery:
+schema once for every SQL dialect (`Base.metadata` is what alembic's
+autogenerate diffs migrations against). What we deliberately do NOT use is the
+ORM's mutation machinery:
 
 * **No `Session`, ever.** Statements built from these classes are executed on
   plain Core connections; every write is a visible `conn.execute(...)` in
@@ -13,8 +14,8 @@ strings). What we deliberately do NOT use is the ORM's mutation machinery:
 * **Never instantiated.** `UserRow(...)` is never constructed, so no mutable
   mapped object exists. The only values that travel are the frozen domain types
   in `app.core`.
-* **Shell-only.** Imported by `sql_store.py` (and `main.py` for schema
-  creation); never by `app/core/`, `http.py`, or `cli.py`.
+* **Shell-only.** Imported by `sql_store.py` (and the alembic `migrations/env.py`
+  for autogenerate); never by `app/core/`, `http.py`, or `cli.py`.
 
 Columns are plain TEXT: parsing rows into domain values (`Email.parse`, …)
 happens in the store, at the boundary (§8) — the database stays as untyped as

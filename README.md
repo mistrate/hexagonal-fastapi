@@ -55,12 +55,14 @@ app/
                         (total transitions over `Membership | None`, §4)
     accounts.py         cross-aggregate rule: can't delete a user who is a team's sole admin
   shell/                IMPERATIVE SHELL — I/O at the edges
-    stores.py           UserStore / TeamStore / MembershipStore Protocols + combined Store
+    database/           the persistence package — create_store(url) + run_migrations(url)
+      stores.py         UserStore / TeamStore / MembershipStore Protocols + combined Store
                         (incl. unit_of_work for atomic multi-step operations)
-    memory_store.py     InMemoryStore   (tests / local; UoW = snapshot/restore)
-    db_types.py         typed table schema (SQLAlchemy declarative, metadata only — no Session)
-    sql_store.py        SqlStore        (SQLite by default or Postgres — the engine decides;
-                                         Engine or Connection; 3 tables, FKs)
+      memory_store.py   InMemoryStore   (tests / local; UoW = snapshot/restore)
+      types.py          typed table schema (SQLAlchemy declarative, metadata only — no Session)
+      sql_store.py      SqlStore        (SQLite by default or Postgres — the engine decides;
+                                         Engine or Connection; 3 tables, FKs; no DDL)
+      migrations/       alembic env + versions — the schema's single owner
     http.py             FastAPI adapter + create_app
     cli.py              Typer CLI — one command per operation
   main.py               composition root (pick a backend, build the app)
@@ -117,6 +119,7 @@ boundary swappable in this paradigm.
 
 ```bash
 uv sync                       # core + dev tooling (SQLite needs no extra)
+uv run alembic upgrade head   # the schema is owned by migrations, not the store
 uv run uvicorn app.main:app --reload
 ```
 
@@ -137,7 +140,7 @@ curl -X DELETE localhost:8000/users/u2     # delete user — cascades membership
 ```
 
 The CLI is the same core, different shell (Typer). SQLite is file-backed, so each
-command is a separate, realistic invocation:
+command is a separate, realistic invocation (same migrated database as the API):
 
 ```bash
 uv run python -m app.shell.cli add-user u1 ada@example.com Ada
@@ -161,7 +164,8 @@ uv run --extra postgres pytest  # also runs the real-Postgres integration tests 
 
 `uv run pytest` (no extra, no Docker) runs everything except the Postgres
 integration tests, which skip cleanly. Those start one throwaway Postgres
-container via testcontainers, create the schema **once**, and run each test in a
+container via testcontainers, run the alembic migrations **once** (tests set
+the database up the same way production does), and run each test in a
 transaction rolled back at the end (savepoints for nested writes) — fast and
 isolated. `uv run ty check` checks the SQL store against SQLAlchemy's real
 types (it is a base dependency; the `postgres` extra only adds the driver).
@@ -172,7 +176,7 @@ Change the one block in `app/main.py` — `SqlStore` over a SQLite engine
 (default) or a Postgres one (install the driver: `uv sync --extra postgres`),
 or `InMemoryStore`. No port is
 involved in the *core* — you swap one concrete `Store` for another at the
-composition root. The segregated Protocols in `app/shell/stores.py` are the
+composition root. The segregated Protocols in `app/shell/database/stores.py` are the
 legitimate use of a `Protocol` the guidelines allow (§2, final paragraph):
 several real backends, in the shell, never imported by the core.
 

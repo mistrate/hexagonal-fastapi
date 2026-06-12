@@ -11,7 +11,8 @@ dependencies = [
     "pydantic==2.13.4",     # imported directly at the HTTP boundary (app/shell/http.py)
     "typer==0.26.7",        # the CLI delivery mechanism (app/shell/cli.py)
     "httpx2==2.3.0",        # required by fastapi.testclient (starlette selects httpx2 when present)
-    "sqlalchemy==2.0.50",   # the SQL backend (app/shell/sql_store.py): typed schema, pooling, dialects
+    "sqlalchemy==2.0.50",   # the SQL backend (app/shell/database/): typed schema, pooling, dialects
+    "alembic==1.18.4",      # migrations own the schema; the store performs no DDL
 ]
 
 # Optional Postgres driver for the SQL store (SQLite needs nothing extra).
@@ -37,6 +38,14 @@ dev = [
 [tool.pytest]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+# Alembic config lives here (PEP 621 style, supported since alembic 1.16) — no
+# alembic.ini. The database URL is not configured here: `migrations/env.py`
+# falls back to the app's DEFAULT_DATABASE_URL, and tests/tools pass a URL
+# programmatically via `app.shell.database.run_migrations`.
+[tool.alembic]
+script_location = "%(here)s/app/shell/database/migrations"
+prepend_sys_path = ["."]
 
 # ty (Astral's type checker) has no strict/lax switch — its default rule set is
 # the gate. Run with: uv run ty check

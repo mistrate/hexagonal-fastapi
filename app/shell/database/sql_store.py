@@ -1,6 +1,6 @@
 """The SQL backend — one store for SQLite (default) and Postgres.
 
-Queries are built from the typed row models in `db_types.py` (column typos are
+Queries are built from the typed row models in `types.py` (column typos are
 type errors; `select(...)` results are typed) and executed on plain Core
 connections — no `Session`, so every write is a visible `conn.execute(...)`
 right here. The dialect comes from the connectable; the only per-dialect code
@@ -15,10 +15,13 @@ It accepts a SQLAlchemy **connectable** — an `Engine` or a `Connection`:
   transaction), each write runs in a SAVEPOINT (`begin_nested`) on that one
   connection, so a multi-step shell operation commits or rolls back as a whole.
 
-`create_sqlite_engine` exists because pysqlite's default transaction handling
-never emits BEGIN for SAVEPOINT-only blocks; the two event hooks hand control
-of transactions to SQLAlchemy (the documented recipe), and turn foreign-key
-enforcement on per connection.
+The store performs no DDL: the schema is owned by the alembic migrations under
+`migrations/` (apply them with `uv run alembic upgrade head`, or
+`run_migrations` from this package). `create_engine_for` exists because
+pysqlite's default transaction handling never emits BEGIN for SAVEPOINT-only
+blocks; for SQLite URLs its two event hooks hand control of transactions to
+SQLAlchemy (the documented recipe), and turn foreign-key enforcement on per
+connection.
 
 Parsing happens at this boundary (§8); our own rows are assumed valid, so a
 malformed one is a panic — hence `.unwrap()`.
@@ -35,14 +38,14 @@ from sqlalchemy.dialects.sqlite import Insert as SqliteInsert, insert as sqlite_
 from app.core.membership import Membership, MembershipRole
 from app.core.team import Team, TeamId, TeamName
 from app.core.user import DisplayName, Email, User, UserId
-from app.shell.db_types import Base, MembershipRow, TeamRow, UserRow
-from app.shell.stores import Store
-
-DEFAULT_DB_PATH = "app.db"
+from app.shell.database.stores import Store
+from app.shell.database.types import Base, MembershipRow, TeamRow, UserRow
 
 
-def create_sqlite_engine(path: str = DEFAULT_DB_PATH) -> Engine:
-    engine = create_engine(f"sqlite:///{path}")
+def create_engine_for(database_url: str) -> Engine:
+    engine = create_engine(database_url)
+    if engine.dialect.name != "sqlite":
+        return engine
 
     @event.listens_for(engine, "connect")
     def _on_connect(dbapi_connection: sqlite3.Connection, _record: object) -> None:
@@ -57,13 +60,6 @@ def create_sqlite_engine(path: str = DEFAULT_DB_PATH) -> Engine:
         conn.exec_driver_sql("BEGIN")
 
     return engine
-
-
-def create_schema(connectable: Engine | Connection) -> None:
-    """Create the tables once (a real app would use migrations). Kept out of the
-    store so integration tests run it a single time, committed, then wrap each
-    test in a transaction they roll back."""
-    Base.metadata.create_all(connectable)
 
 
 class SqlStore:

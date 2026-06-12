@@ -2,7 +2,8 @@
 
 Fast and isolated:
 
-* the container starts and the schema is created **once** per session;
+* the container starts and the alembic migrations run **once** per session
+  (so they are exercised against real Postgres too);
 * each test runs in its own transaction on a single connection — the store's
   writes become SAVEPOINTs (it uses `begin_nested` when given a `Connection`), so
   any nested transactions during a test are savepoints too — and the fixture
@@ -25,7 +26,8 @@ from testcontainers.postgres import PostgresContainer
 from app.core.membership import Membership, MembershipRole
 from app.core.team import Team, TeamId, TeamName
 from app.core.user import DisplayName, Email, User, UserId
-from app.shell.sql_store import SqlStore, create_schema
+from app.shell.database import run_migrations
+from app.shell.database.sql_store import SqlStore
 
 
 def a_user(user_id: str = "u1", name: str = "Ada") -> User:
@@ -48,8 +50,8 @@ def engine() -> Iterator[Engine]:
     except Exception as exc:  # Docker not running / image unavailable
         pytest.skip(f"Postgres container unavailable: {exc}")
     try:
+        run_migrations(postgres.get_connection_url())  # once for the whole suite, committed
         eng = create_engine(postgres.get_connection_url())
-        create_schema(eng)  # once for the whole suite, committed
         yield eng
         eng.dispose()
     finally:

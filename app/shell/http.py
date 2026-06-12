@@ -31,7 +31,7 @@ from app.core.membership import (
 from app.core.result import Err, Ok
 from app.core.team import TeamId
 from app.core.user import User, UserId, change_display_name, create_user, describe
-from app.shell.stores import Store
+from app.shell.database.stores import Store
 
 # --- boundary models (§8) ---
 

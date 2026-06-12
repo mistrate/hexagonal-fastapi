@@ -26,7 +26,7 @@ distillation. When the two disagree, the guidelines win.
    takes domain *values* (`change_display_name(user, raw) -> Result[...]`). It
    does not take a store, a repository, or any I/O interface. Loading and saving
    happen in the shell, around the call. Store `Protocol`s are allowed **only** in
-   the shell (`app/shell/stores.py`: `UserStore`/`TeamStore`/`MembershipStore`,
+   the shell (`app/shell/database/stores.py`: `UserStore`/`TeamStore`/`MembershipStore`,
    composed into `Store`) and **only** to choose between genuinely-multiple
    production backends (`SqlStore` over a SQLite (default) or Postgres engine,
    `InMemoryStore`) — never to make the core testable. If you can test it by passing a value, you
@@ -55,12 +55,13 @@ distillation. When the two disagree, the guidelines win.
 6. **Framework types stay in the shell.** Pydantic models, `HTTPException`, SQL,
    status codes — all live under `app/shell/`. The core never sees them.
    SQLAlchemy is allowed under one bounded exception (§16: wrap libraries at the
-   edge): the declarative `*Row` classes in `app/shell/db_types.py` are **typed
-   table metadata only** — they define the schema once for both SQL dialects and
-   give type-checked column references and result rows. They are never
-   instantiated, never leave `sql_store.py`/`main.py`, and `Session` is never
-   imported — every write is an explicit `conn.execute(...)` on a Core
-   connection in `sql_store.py`.
+   edge): the declarative `*Row` classes in `app/shell/database/types.py` are
+   **typed table metadata only** — they define the schema once for both SQL
+   dialects (alembic autogenerate diffs against `Base.metadata`) and give
+   type-checked column references and result rows. They are never instantiated,
+   never leave the `database` package, and `Session` is never imported — every
+   write is an explicit `conn.execute(...)` on a Core connection in
+   `sql_store.py`.
 
 7. **Python 3.14 idioms.** PEP 695 generics (`class Ok[T]`, `type Result[T, E] =
    …`). No `from __future__ import annotations` — PEP 649 defers evaluation, so
@@ -69,8 +70,9 @@ distillation. When the two disagree, the guidelines win.
    is why ruff's `TCH` is deliberately off, and why `Result` is a runtime import
    in the core modules).
 
-8. **Store layout (how it scales).** Interfaces segregated by entity in
-   `app/shell/stores.py`; one backend class implements them all over one database
+8. **Store layout (how it scales).** Everything persistence lives in
+   `app/shell/database/`. Interfaces segregated by entity in its `stores.py`;
+   one backend class implements them all over one database
    (entity-prefixed methods: `get_user`, `get_team`, …). One core module per
    entity (`user.py`, `team.py`, `membership.py`), sharing `errors.py` and
    `result.py`. Adding an entity = a new core module + a focused Protocol + its
@@ -98,11 +100,14 @@ To add, say, a "change email" capability:
    map errors to status codes. Add the request/response Pydantic models here. If
    success means more than one write, wrap them in `with store.unit_of_work():`.
 4. If persistence changed, add the method to the right Protocol in
-   `app/shell/stores.py` and implement it in **every** backend (`memory_store.py`,
-   `sql_store.py` — the SQL one covers SQLite and Postgres from a single typed
-   schema). A whole new entity = a new `app/core/<entity>.py` + a focused
-   Protocol in `stores.py` + a `*Row` model in `db_types.py` + its methods in
-   each backend.
+   `app/shell/database/stores.py` and implement it in **every** backend
+   (`memory_store.py`, `sql_store.py` — the SQL one covers SQLite and Postgres
+   from a single typed schema). If the *schema* changed, update the `*Row`
+   models in `types.py` and generate a migration:
+   `uv run alembic revision --autogenerate -m "<what changed>"` (review it —
+   the store performs no DDL). A whole new entity = a new `app/core/<entity>.py`
+   + a focused Protocol in `stores.py` + a `*Row` model in `types.py` + a
+   migration + its methods in each backend.
 5. Tests: one for the pure function passing **values** (no fake, no mock —
    mirror `tests/test_user.py`); one for the shell via `create_app` (mirror
    `tests/test_http.py`). Add a hypothesis property if the core invariant is
@@ -110,6 +115,9 @@ To add, say, a "change email" capability:
 
 ## Commands
 
+- Migrate (required before first run — the store creates no schema):
+  `uv run alembic upgrade head`; new revision:
+  `uv run alembic revision --autogenerate -m "<message>"`
 - Run: `uv run uvicorn app.main:app --reload`
 - CLI: `uv run python -m app.shell.cli --help` (commands: `add-user`,
   `rename-user`, `delete-user`, `add-team`, `add-member`, `update-role`,
@@ -136,6 +144,9 @@ To add, say, a "change email" capability:
   combinations that encode a hidden state machine.
 - Importing `fastapi`/`sqlalchemy`/`pydantic` anywhere under `app/core/`.
 - Using a SQLAlchemy `Session`, instantiating a `*Row`, or letting `*Row` types
-  out of the SQL store — `db_types.py` is schema metadata, not a mutation layer.
+  out of the `database` package — `types.py` is schema metadata, not a mutation
+  layer.
+- Creating tables from the store or app (`Base.metadata.create_all`) — the
+  schema is owned by the alembic migrations; `create_store` never does DDL.
 - Business logic in a route handler — the handler is shell; it loads, calls the
   core, and performs effects.

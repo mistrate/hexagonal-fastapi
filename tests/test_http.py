@@ -10,8 +10,8 @@ from fastapi.testclient import TestClient
 from app.core.membership import Membership, MembershipRole
 from app.core.team import Team, TeamId, TeamName
 from app.core.user import DisplayName, Email, User, UserId
+from app.shell.database.memory_store import InMemoryStore
 from app.shell.http import create_app
-from app.shell.memory_store import InMemoryStore
 
 
 def fresh_client() -> TestClient:

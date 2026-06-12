@@ -12,9 +12,8 @@ import pytest
 from app.core.membership import Membership, MembershipRole
 from app.core.team import Team, TeamId, TeamName
 from app.core.user import DisplayName, Email, User, UserId
-from app.shell.memory_store import InMemoryStore
-from app.shell.sql_store import SqlStore, create_schema, create_sqlite_engine
-from app.shell.stores import Store
+from app.shell.database import Store, create_store, run_migrations
+from app.shell.database.memory_store import InMemoryStore
 
 
 def a_user(user_id: str = "u1") -> User:
@@ -32,9 +31,9 @@ def a_team(team_id: str = "t1") -> Team:
 @pytest.fixture(params=["memory", "sqlite"])
 def store(request: pytest.FixtureRequest, tmp_path: Path) -> Store:
     if request.param == "sqlite":
-        engine = create_sqlite_engine(str(tmp_path / "app.db"))
-        create_schema(engine)
-        return SqlStore(engine)
+        url = f"sqlite:///{tmp_path / 'app.db'}"
+        run_migrations(url)
+        return create_store(url)
     return InMemoryStore()
 
 

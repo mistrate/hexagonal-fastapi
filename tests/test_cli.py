@@ -11,12 +11,15 @@ from pathlib import Path
 from typer.testing import CliRunner, Result
 
 from app.shell.cli import cli
+from app.shell.database import run_migrations
 
 runner = CliRunner()
 
 
 def _run(tmp_path: Path, *args: str) -> Result:
-    return runner.invoke(cli, [*args, "--db", str(tmp_path / "app.db")])
+    url = f"sqlite:///{tmp_path / 'app.db'}"
+    run_migrations(url)  # idempotent — the CLI assumes a migrated database
+    return runner.invoke(cli, [*args, "--db", url])
 
 
 def _seed_team(tmp_path: Path) -> None:

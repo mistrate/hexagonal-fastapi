@@ -92,7 +92,7 @@ to work with any of them (instead of duplicating the load→decide→save
 orchestration per backend), define a `Protocol`. This is what this repo does:
 
 ```python
-# app/shell/stores.py  — segregated per entity (NOT in the core or HTTP adapter)
+# app/shell/database/stores.py — segregated per entity (NOT in the core or HTTP adapter)
 class UserStore(Protocol):
     def get_user(self, user_id: UserId) -> User | None: ...
     def save_user(self, user: User) -> None: ...
@@ -105,7 +105,7 @@ def create_app(store: Store) -> FastAPI:
     ...
 
 # app/main.py  — one backend implements all of it (one DB, several tables)
-_store = SqlStore(create_sqlite_engine())   # or InMemoryStore(), or SqlStore(pg_engine)
+_store = create_store()   # SQLite URL by default; or create_store(pg_url), or InMemoryStore()
 app = create_app(_store)
 ```
 

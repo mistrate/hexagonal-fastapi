@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from app.core.membership import Membership
 from app.core.team import Team, TeamId
 from app.core.user import User, UserId
-from app.shell.stores import Store
+from app.shell.database.stores import Store
 
 
 class InMemoryStore:

@@ -2,7 +2,8 @@
 
 Each command is a thin shell: build the store, load, call the pure core, render,
 exit. Data persists in SQLite between invocations, so `add-team` → `add-member`
-→ `memberships` across separate calls is realistic.
+→ `memberships` across separate calls is realistic. The database must be
+migrated first (`uv run alembic upgrade head`) — the store creates no schema.
 
     python -m app.shell.cli --help
 """
@@ -24,18 +25,12 @@ from app.core.membership import (
 from app.core.result import Err, Ok
 from app.core.team import TeamId
 from app.core.user import UserId, change_display_name, create_user, describe
-from app.shell.sql_store import DEFAULT_DB_PATH, SqlStore, create_schema, create_sqlite_engine
+from app.shell.database import DEFAULT_DATABASE_URL, create_store
 
 cli = typer.Typer(
     help="Manage users and teams — a CLI shell around the same pure core as the API.",
     no_args_is_help=True,
 )
-
-
-def _store(db: str) -> SqlStore:
-    engine = create_sqlite_engine(db)
-    create_schema(engine)
-    return SqlStore(engine)
 
 
 def _parse_role_or_exit(raw: str) -> MembershipRole:
@@ -55,10 +50,12 @@ def add_user(
     user_id: Annotated[str, typer.Argument(help="ID for the new user.")],
     email: Annotated[str, typer.Argument(help="Email address.")],
     display_name: Annotated[str, typer.Argument(help="Display name.")],
-    db: Annotated[str, typer.Option(help="SQLite database file.")] = DEFAULT_DB_PATH,
+    db: Annotated[
+        str, typer.Option(help="Database URL (must be migrated).")
+    ] = DEFAULT_DATABASE_URL,
 ) -> None:
     """Add a user."""
-    store = _store(db)
+    store = create_store(db)
     if store.get_user(UserId(user_id)) is not None:
         typer.echo(f"error: user {user_id!r} already exists", err=True)
         raise typer.Exit(code=1)
@@ -76,10 +73,12 @@ def add_user(
 def rename_user(
     user_id: Annotated[str, typer.Argument(help="ID of an existing user.")],
     new_display_name: Annotated[str, typer.Argument(help="The new display name.")],
-    db: Annotated[str, typer.Option(help="SQLite database file.")] = DEFAULT_DB_PATH,
+    db: Annotated[
+        str, typer.Option(help="Database URL (must be migrated).")
+    ] = DEFAULT_DATABASE_URL,
 ) -> None:
     """Change a user's display name."""
-    store = _store(db)
+    store = create_store(db)
     user = store.get_user(UserId(user_id))
     if user is None:
         typer.echo(f"error: user {user_id!r} not found (add it first)", err=True)
@@ -96,10 +95,12 @@ def rename_user(
 @cli.command()
 def delete_user(
     user_id: Annotated[str, typer.Argument(help="ID of the user to delete.")],
-    db: Annotated[str, typer.Option(help="SQLite database file.")] = DEFAULT_DB_PATH,
+    db: Annotated[
+        str, typer.Option(help="Database URL (must be migrated).")
+    ] = DEFAULT_DATABASE_URL,
 ) -> None:
     """Delete a user, cascading their team memberships."""
-    store = _store(db)
+    store = create_store(db)
     uid = UserId(user_id)
     user = store.get_user(uid)
     if user is None:
@@ -132,10 +133,12 @@ def add_team(
     team_id: Annotated[str, typer.Argument(help="ID for the new team.")],
     name: Annotated[str, typer.Argument(help="Team name.")],
     admin_user_id: Annotated[str, typer.Argument(help="User ID of the team's first admin.")],
-    db: Annotated[str, typer.Option(help="SQLite database file.")] = DEFAULT_DB_PATH,
+    db: Annotated[
+        str, typer.Option(help="Database URL (must be migrated).")
+    ] = DEFAULT_DATABASE_URL,
 ) -> None:
     """Add a team with its founding admin (a team is created with >=1 admin)."""
-    store = _store(db)
+    store = create_store(db)
     if store.get_team(TeamId(team_id)) is not None:
         typer.echo(f"error: team {team_id!r} already exists", err=True)
         raise typer.Exit(code=1)
@@ -162,10 +165,12 @@ def add_member(
     team_id: Annotated[str, typer.Argument(help="Team ID.")],
     user_id: Annotated[str, typer.Argument(help="User ID.")],
     role: Annotated[str, typer.Argument(help="'member' or 'admin'.")],
-    db: Annotated[str, typer.Option(help="SQLite database file.")] = DEFAULT_DB_PATH,
+    db: Annotated[
+        str, typer.Option(help="Database URL (must be migrated).")
+    ] = DEFAULT_DATABASE_URL,
 ) -> None:
     """Add a user to a team with a role."""
-    store = _store(db)
+    store = create_store(db)
     parsed_role = _parse_role_or_exit(role)
     user = store.get_user(UserId(user_id))
     if user is None:
@@ -190,10 +195,12 @@ def update_role(
     team_id: Annotated[str, typer.Argument(help="Team ID.")],
     user_id: Annotated[str, typer.Argument(help="User ID.")],
     role: Annotated[str, typer.Argument(help="'member' or 'admin'.")],
-    db: Annotated[str, typer.Option(help="SQLite database file.")] = DEFAULT_DB_PATH,
+    db: Annotated[
+        str, typer.Option(help="Database URL (must be migrated).")
+    ] = DEFAULT_DATABASE_URL,
 ) -> None:
     """Change a user's role in a team."""
-    store = _store(db)
+    store = create_store(db)
     parsed_role = _parse_role_or_exit(role)
     existing = store.get_membership(UserId(user_id), TeamId(team_id))
     team_members = store.list_memberships_for_team(TeamId(team_id))
@@ -210,10 +217,12 @@ def update_role(
 def remove_member(
     team_id: Annotated[str, typer.Argument(help="Team ID.")],
     user_id: Annotated[str, typer.Argument(help="User ID.")],
-    db: Annotated[str, typer.Option(help="SQLite database file.")] = DEFAULT_DB_PATH,
+    db: Annotated[
+        str, typer.Option(help="Database URL (must be migrated).")
+    ] = DEFAULT_DATABASE_URL,
 ) -> None:
     """Remove a user from a team."""
-    store = _store(db)
+    store = create_store(db)
     existing = store.get_membership(UserId(user_id), TeamId(team_id))
     team_members = store.list_memberships_for_team(TeamId(team_id))
     match remove_member_from_team(existing, team_members):
@@ -228,10 +237,12 @@ def remove_member(
 @cli.command()
 def memberships(
     user_id: Annotated[str, typer.Argument(help="User ID.")],
-    db: Annotated[str, typer.Option(help="SQLite database file.")] = DEFAULT_DB_PATH,
+    db: Annotated[
+        str, typer.Option(help="Database URL (must be migrated).")
+    ] = DEFAULT_DATABASE_URL,
 ) -> None:
     """List the teams a user belongs to."""
-    store = _store(db)
+    store = create_store(db)
     if store.get_user(UserId(user_id)) is None:
         typer.echo(f"error: user {user_id!r} not found", err=True)
         raise typer.Exit(code=1)

@@ -1,4 +1,4 @@
-"""The SQLite store across all three tables, against a temp file.
+"""The SQL store (SQLite engine) across all three tables, against a temp file.
 
 No mocking — a real backend, real persistence, foreign keys on. Exercises the
 multi-table shape: user/team roundtrips, the composite-key membership, upsert,
@@ -10,7 +10,13 @@ from pathlib import Path
 from app.core.membership import Membership, MembershipRole
 from app.core.team import Team, TeamId, TeamName
 from app.core.user import DisplayName, Email, User, UserId
-from app.shell.sqlite_store import SqliteStore
+from app.shell.database import Store, create_store, run_migrations
+
+
+def sqlite_store(path: str) -> Store:
+    url = f"sqlite:///{path}"
+    run_migrations(url)  # the store performs no DDL — migrate the temp file first
+    return create_store(url)
 
 
 def a_user(user_id: str = "u1", name: str = "Ada") -> User:
@@ -26,19 +32,19 @@ def a_team(team_id: str = "t1", name: str = "Core") -> Team:
 
 
 def test_user_roundtrip(tmp_path: Path) -> None:
-    store = SqliteStore(str(tmp_path / "app.db"))
+    store = sqlite_store(str(tmp_path / "app.db"))
     store.save_user(a_user())
     assert store.get_user(UserId("u1")) == a_user()
 
 
 def test_team_roundtrip(tmp_path: Path) -> None:
-    store = SqliteStore(str(tmp_path / "app.db"))
+    store = sqlite_store(str(tmp_path / "app.db"))
     store.save_team(a_team())
     assert store.get_team(TeamId("t1")) == a_team()
 
 
 def test_membership_roundtrip_and_delete(tmp_path: Path) -> None:
-    store = SqliteStore(str(tmp_path / "app.db"))
+    store = sqlite_store(str(tmp_path / "app.db"))
     store.save_user(a_user())
     store.save_team(a_team())
     membership = Membership(UserId("u1"), TeamId("t1"), MembershipRole.ADMIN)
@@ -49,7 +55,7 @@ def test_membership_roundtrip_and_delete(tmp_path: Path) -> None:
 
 
 def test_save_membership_upserts_role(tmp_path: Path) -> None:
-    store = SqliteStore(str(tmp_path / "app.db"))
+    store = sqlite_store(str(tmp_path / "app.db"))
     store.save_user(a_user())
     store.save_team(a_team())
     store.save_membership(Membership(UserId("u1"), TeamId("t1"), MembershipRole.MEMBER))
@@ -60,7 +66,7 @@ def test_save_membership_upserts_role(tmp_path: Path) -> None:
 
 
 def test_list_memberships_for_user_filters(tmp_path: Path) -> None:
-    store = SqliteStore(str(tmp_path / "app.db"))
+    store = sqlite_store(str(tmp_path / "app.db"))
     store.save_user(a_user("u1"))
     store.save_user(a_user("u2"))
     store.save_team(a_team("t1"))
@@ -74,13 +80,13 @@ def test_list_memberships_for_user_filters(tmp_path: Path) -> None:
 
 def test_data_persists_across_instances(tmp_path: Path) -> None:
     path = str(tmp_path / "app.db")
-    SqliteStore(path).save_user(a_user())
-    assert SqliteStore(path).get_user(UserId("u1")) == a_user()
+    sqlite_store(path).save_user(a_user())
+    assert sqlite_store(path).get_user(UserId("u1")) == a_user()
 
 
 def test_delete_user_removes_only_the_user(tmp_path: Path) -> None:
     # The store does a single-row delete; cascading is the shell's job, not the store's.
-    store = SqliteStore(str(tmp_path / "app.db"))
+    store = sqlite_store(str(tmp_path / "app.db"))
     store.save_user(a_user())
     store.delete_user(UserId("u1"))
     assert store.get_user(UserId("u1")) is None

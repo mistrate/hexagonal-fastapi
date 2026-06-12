@@ -1,8 +1,9 @@
-"""Integration tests for `PostgresStore` against a real Postgres (testcontainers).
+"""Integration tests for `SqlStore` against a real Postgres (testcontainers).
 
 Fast and isolated:
 
-* the container starts and the schema is created **once** per session;
+* the container starts and the alembic migrations run **once** per session
+  (so they are exercised against real Postgres too);
 * each test runs in its own transaction on a single connection — the store's
   writes become SAVEPOINTs (it uses `begin_nested` when given a `Connection`), so
   any nested transactions during a test are savepoints too — and the fixture
@@ -14,7 +15,7 @@ Skipped automatically when the `postgres` extra or Docker is unavailable.
 
 import pytest
 
-pytest.importorskip("sqlalchemy")
+pytest.importorskip("psycopg")
 pytest.importorskip("testcontainers")
 
 from collections.abc import Iterator
@@ -25,7 +26,8 @@ from testcontainers.postgres import PostgresContainer
 from app.core.membership import Membership, MembershipRole
 from app.core.team import Team, TeamId, TeamName
 from app.core.user import DisplayName, Email, User, UserId
-from app.shell.postgres_store import PostgresStore, create_schema
+from app.shell.database import run_migrations
+from app.shell.database.sql_store import SqlStore
 
 
 def a_user(user_id: str = "u1", name: str = "Ada") -> User:
@@ -48,8 +50,8 @@ def engine() -> Iterator[Engine]:
     except Exception as exc:  # Docker not running / image unavailable
         pytest.skip(f"Postgres container unavailable: {exc}")
     try:
+        run_migrations(postgres.get_connection_url())  # once for the whole suite, committed
         eng = create_engine(postgres.get_connection_url())
-        create_schema(eng)  # once for the whole suite, committed
         yield eng
         eng.dispose()
     finally:
@@ -57,22 +59,22 @@ def engine() -> Iterator[Engine]:
 
 
 @pytest.fixture
-def store(engine: Engine) -> Iterator[PostgresStore]:
+def store(engine: Engine) -> Iterator[SqlStore]:
     connection = engine.connect()
     transaction = connection.begin()  # one outer transaction per test
     try:
-        yield PostgresStore(connection)  # writes become savepoints on this connection
+        yield SqlStore(connection)  # writes become savepoints on this connection
     finally:
         transaction.rollback()  # discard everything this test did — the schema stays
         connection.close()
 
 
-def test_user_roundtrip(store: PostgresStore) -> None:
+def test_user_roundtrip(store: SqlStore) -> None:
     store.save_user(a_user())
     assert store.get_user(UserId("u1")) == a_user()
 
 
-def test_team_and_membership_roundtrip(store: PostgresStore) -> None:
+def test_team_and_membership_roundtrip(store: SqlStore) -> None:
     store.save_user(a_user())
     store.save_team(a_team())
     membership = Membership(UserId("u1"), TeamId("t1"), MembershipRole.ADMIN)
@@ -80,7 +82,7 @@ def test_team_and_membership_roundtrip(store: PostgresStore) -> None:
     assert store.get_membership(UserId("u1"), TeamId("t1")) == membership
 
 
-def test_membership_delete(store: PostgresStore) -> None:
+def test_membership_delete(store: SqlStore) -> None:
     store.save_user(a_user())
     store.save_team(a_team())
     store.save_membership(Membership(UserId("u1"), TeamId("t1"), MembershipRole.MEMBER))
@@ -88,7 +90,7 @@ def test_membership_delete(store: PostgresStore) -> None:
     assert store.get_membership(UserId("u1"), TeamId("t1")) is None
 
 
-def test_list_memberships(store: PostgresStore) -> None:
+def test_list_memberships(store: SqlStore) -> None:
     store.save_user(a_user("u1"))
     store.save_user(a_user("u2"))
     store.save_team(a_team("t1"))
@@ -106,16 +108,16 @@ def test_list_memberships(store: PostgresStore) -> None:
     }
 
 
-def test_delete_user(store: PostgresStore) -> None:
+def test_delete_user(store: SqlStore) -> None:
     store.save_user(a_user())
     store.delete_user(UserId("u1"))
     assert store.get_user(UserId("u1")) is None
 
 
-def test_rollback_isolates_part1(store: PostgresStore) -> None:
+def test_rollback_isolates_part1(store: SqlStore) -> None:
     store.save_user(a_user("ghost"))  # rolled back when this test ends
 
 
-def test_rollback_isolates_part2(store: PostgresStore) -> None:
+def test_rollback_isolates_part2(store: SqlStore) -> None:
     # If the per-test rollback works, part1's write is gone.
     assert store.get_user(UserId("ghost")) is None

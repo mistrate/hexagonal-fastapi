@@ -66,5 +66,5 @@ class Err[E]:
 
 
 # A generic alias (PEP 695): `Result[int, str]` is `Ok[int] | Err[str]`. `match`
-# narrows it and mypy tracks both tracks.
+# narrows it and the type checker tracks both tracks.
 type Result[T, E] = Ok[T] | Err[E]

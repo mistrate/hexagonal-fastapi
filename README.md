@@ -55,11 +55,14 @@ app/
                         (total transitions over `Membership | None`, §4)
     accounts.py         cross-aggregate rule: can't delete a user who is a team's sole admin
   shell/                IMPERATIVE SHELL — I/O at the edges
-    stores.py           UserStore / TeamStore / MembershipStore Protocols + combined Store
+    database/           the persistence package — create_store(url) + run_migrations(url)
+      stores.py         UserStore / TeamStore / MembershipStore Protocols + combined Store
                         (incl. unit_of_work for atomic multi-step operations)
-    memory_store.py     InMemoryStore   (tests / local; UoW = snapshot/restore)
-    sqlite_store.py     SqliteStore     (default; stdlib sqlite3, 3 tables, FKs)
-    postgres_store.py   PostgresStore   (optional `postgres` extra; Engine or Connection)
+      memory_store.py   InMemoryStore   (tests / local; UoW = snapshot/restore)
+      types.py          typed table schema (SQLAlchemy declarative, metadata only — no Session)
+      sql_store.py      SqlStore        (SQLite by default or Postgres — the engine decides;
+                                         Engine or Connection; 3 tables, FKs; no DDL)
+      migrations/       alembic env + versions — the schema's single owner
     http.py             FastAPI adapter + create_app
     cli.py              Typer CLI — one command per operation
   main.py               composition root (pick a backend, build the app)
@@ -81,7 +84,7 @@ it sane:
 1. **Segregated interfaces, unified implementation.** `stores.py` defines a
    focused Protocol per entity (`UserStore`, `TeamStore`, `MembershipStore`) and
    composes them into one `Store`. But there is still **one** backend class per
-   backend — `SqliteStore` owns all three tables, one connection, foreign keys.
+   backend — `SqlStore` owns all three tables, one engine, foreign keys.
    So adding an entity is "a focused Protocol + a few methods on each backend,"
    never a new abstraction the *core* depends on. Methods are entity-prefixed
    (`get_user`, `get_team`, `get_membership`) precisely because one object serves
@@ -97,7 +100,8 @@ it sane:
 Two costs worth seeing plainly:
 
 - **The N×M tax.** Every method in `stores.py` must be implemented in *every*
-  backend (memory, sqlite, postgres). More operations × more backends = linear
+  backend (memory, sql — the sql one at least serves both dialects from one
+  typed schema). More operations × more backends = linear
   growth. That is the real price of keeping multiple backends — and the reason
   §2 says to keep a store `Protocol` only when you genuinely have several
   production implementations.
@@ -115,6 +119,7 @@ boundary swappable in this paradigm.
 
 ```bash
 uv sync                       # core + dev tooling (SQLite needs no extra)
+uv run alembic upgrade head   # the schema is owned by migrations, not the store
 uv run uvicorn app.main:app --reload
 ```
 
@@ -135,7 +140,7 @@ curl -X DELETE localhost:8000/users/u2     # delete user — cascades membership
 ```
 
 The CLI is the same core, different shell (Typer). SQLite is file-backed, so each
-command is a separate, realistic invocation:
+command is a separate, realistic invocation (same migrated database as the API):
 
 ```bash
 uv run python -m app.shell.cli add-user u1 ada@example.com Ada
@@ -152,24 +157,26 @@ uv run python -m app.shell.cli --help
 ## The quality gate
 
 ```bash
-uv run --extra postgres mypy    # strict; --extra so the Postgres store is checked against real types
+uv run ty check                 # type-check (ty — Astral's checker; part of the gate)
 uv run ruff check .
 uv run --extra postgres pytest  # also runs the real-Postgres integration tests (needs Docker)
 ```
 
 `uv run pytest` (no extra, no Docker) runs everything except the Postgres
 integration tests, which skip cleanly. Those start one throwaway Postgres
-container via testcontainers, create the schema **once**, and run each test in a
+container via testcontainers, run the alembic migrations **once** (tests set
+the database up the same way production does), and run each test in a
 transaction rolled back at the end (savepoints for nested writes) — fast and
-isolated. `uv run mypy` without the extra also passes (the `sqlalchemy.*`
-override tolerates the missing import).
+isolated. `uv run ty check` checks the SQL store against SQLAlchemy's real
+types (it is a base dependency; the `postgres` extra only adds the driver).
 
 ## Swapping the backend
 
-Change the one block in `app/main.py` — `SqliteStore` (default), `InMemoryStore`,
-or `PostgresStore` (install the extra: `uv sync --extra postgres`). No port is
+Change the one block in `app/main.py` — `SqlStore` over a SQLite engine
+(default) or a Postgres one (install the driver: `uv sync --extra postgres`),
+or `InMemoryStore`. No port is
 involved in the *core* — you swap one concrete `Store` for another at the
-composition root. The segregated Protocols in `app/shell/stores.py` are the
+composition root. The segregated Protocols in `app/shell/database/stores.py` are the
 legitimate use of a `Protocol` the guidelines allow (§2, final paragraph):
 several real backends, in the shell, never imported by the core.
 

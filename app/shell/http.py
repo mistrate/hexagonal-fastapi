@@ -31,7 +31,7 @@ from app.core.membership import (
 from app.core.result import Err, Ok
 from app.core.team import TeamId
 from app.core.user import User, UserId, change_display_name, create_user, describe
-from app.shell.stores import Store
+from app.shell.database.stores import Store
 
 # --- boundary models (§8) ---
 
@@ -179,7 +179,8 @@ def create_app(store: Store) -> FastAPI:
         if founder is None:
             raise HTTPException(status_code=404, detail="admin user not found")
         match found_team(body.id, body.name, founder):
-            case Ok((team, admin)):
+            case Ok(founding):  # binding the pair (not `Ok((team, admin))`) keeps the
+                team, admin = founding  # match provably exhaustive for ty
                 # Team + founding admin commit together — never a team with no admin.
                 with store.unit_of_work() as tx:
                     tx.save_team(team)

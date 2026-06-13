@@ -693,7 +693,7 @@ wheels = [
 [[package]]
 name = "user-profile-fcis"
 version = "0.2.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "fastapi" },

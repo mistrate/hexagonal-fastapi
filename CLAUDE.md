@@ -119,7 +119,7 @@ To add, say, a "change email" capability:
   `uv run alembic upgrade head`; new revision:
   `uv run alembic revision --autogenerate -m "<message>"`
 - Run: `uv run uvicorn app.main:app --reload`
-- CLI: `uv run python -m app.shell.cli --help` (commands: `add-user`,
+- CLI: `uv run hex --help` (commands: `add-user`,
   `rename-user`, `delete-user`, `add-team`, `add-member`, `update-role`,
   `remove-member`, `memberships`)
 - Test: `uv run pytest` — add `--extra postgres` to also run the real-Postgres

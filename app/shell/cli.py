@@ -3,9 +3,9 @@
 Each command is a thin shell: build the store, load, call the pure core, render,
 exit. Data persists in SQLite between invocations, so `add-team` → `add-member`
 → `memberships` across separate calls is realistic. The database must be
-migrated first (`uv run alembic upgrade head`) — the store creates no schema.
+migrated first (`uv run alembic upgrade head`); the store creates no schema.
 
-    python -m app.shell.cli --help
+    uv run hex --help
 """
 
 from typing import Annotated
@@ -28,7 +28,7 @@ from app.core.user import UserId, change_display_name, create_user, describe
 from app.shell.database import DEFAULT_DATABASE_URL, create_store
 
 cli = typer.Typer(
-    help="Manage users and teams — a CLI shell around the same pure core as the API.",
+    help="Manage users and teams - a CLI shell around the same pure core as the API.",
     no_args_is_help=True,
 )
 

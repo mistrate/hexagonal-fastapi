@@ -1,3 +1,13 @@
+[build-system]
+requires = ["uv_build>=0.11.0,<0.12.0"]
+build-backend = "uv_build"
+
+# Flat layout: the importable package is `app` at the project root, not under
+# `src/` and not named after the distribution, so point uv's build backend at it.
+[tool.uv.build-backend]
+module-name = "app"
+module-root = ""
+
 [project]
 name = "user-profile-fcis"
 version = "0.2.0"
@@ -21,6 +31,11 @@ dependencies = [
 postgres = [
     "psycopg[binary]==3.3.4",
 ]
+
+# Short entry point for the CLI shell: `uv run hex ...` (or just `hex` after
+# `uv sync`). `cli` is the Typer app in app/shell/cli.py.
+[project.scripts]
+hex = "app.shell.cli:cli"
 
 # Dev tooling. The guidelines (§13) treat the type checker as part of the
 # language, not a linter: ty, ruff, pytest, hypothesis.
